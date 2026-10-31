@@ -7,7 +7,7 @@
 # standard Expo env file.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="${STAGING_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$ROOT"
 
 ENV_FILE="${STAGING_ENV_FILE:-$ROOT/staging.local.env}"
@@ -125,7 +125,7 @@ print(f"Wrote {path}. The staging password was not printed.")
 PY
 }
 
-load_env() {
+migrate_legacy_staging_env() {
   local legacy="$ROOT/.env.staging.local"
   if [[ -f "$legacy" && "$ENV_FILE" == "$ROOT/staging.local.env" && ! -f "$ENV_FILE" ]]; then
     mv "$legacy" "$ENV_FILE"
@@ -135,6 +135,10 @@ load_env() {
     echo "Refusing staging: remove .env.staging.local. Expo bundles every project-root .env* file and cannot parse this one. Use staging.local.env." >&2
     exit 1
   fi
+}
+
+load_env() {
+  migrate_legacy_staging_env
   if [[ ! -f "$ENV_FILE" ]]; then
     ensure_env_file
   fi
@@ -281,12 +285,24 @@ merge_supabase_status() {
   python3 - "$ENV_FILE" "$status_file" <<'PY'
 import pathlib, sys
 env_path, status_path = map(pathlib.Path, sys.argv[1:3])
+raw = status_path.read_text().strip()
 status = {}
-for line in status_path.read_text().splitlines():
-    if not line or line.startswith("#") or "=" not in line:
-        continue
-    key, value = line.split("=", 1)
-    status[key] = value.strip().strip('"')
+if raw.startswith("{"):
+    import json
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        sys.exit("Refusing staging: supabase status JSON was not an object")
+    status = {str(key): "" if value is None else str(value) for key, value in parsed.items()}
+else:
+    for line in raw.splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        status[key] = value.strip().strip('"')
+if "ANON_KEY" not in status and "PUBLISHABLE_KEY" not in status:
+    sys.exit("Refusing staging: supabase status did not include an anon key")
+if "SERVICE_ROLE_KEY" not in status and "SECRET_KEY" not in status:
+    sys.exit("Refusing staging: supabase status did not include a service role key")
 if "ANON_KEY" not in status and status.get("PUBLISHABLE_KEY"):
     status["ANON_KEY"] = status["PUBLISHABLE_KEY"]
 if "SERVICE_ROLE_KEY" not in status and status.get("SECRET_KEY"):
@@ -329,7 +345,10 @@ start_supabase_and_reset() {
   status_file="$(mktemp)"
   chmod 600 "$status_file"
   if [[ "${SUPABASE_EXPERIMENTAL_STACK:-}" == "1" ]]; then
-    supabase status --env --output-format text >"$status_file"
+    # Native stack. --env is a stack status flag. With --output-format text it
+    # writes KEY=VALUE credentials. Plain --output-format text is human-readable
+    # and does not populate the anon or service-role keys.
+    supabase stack status --env --output-format text >"$status_file"
   else
     supabase status -o env >"$status_file"
   fi
@@ -339,6 +358,7 @@ start_supabase_and_reset() {
 }
 
 cmd_setup() {
+  migrate_legacy_staging_env
   ensure_env_file
   load_env
   refuse_committed_env_files
@@ -396,13 +416,15 @@ cmd_check() {
   echo
 }
 
-command="${1:-}"
-case "$command" in
-  setup) cmd_setup ;;
-  seed) cmd_seed ;;
-  start) cmd_start ;;
-  check) cmd_check ;;
-  repair-local-history) cmd_repair_local_history ;;
-  validate-migrations) cmd_validate_migrations ;;
-  *) usage; exit 1 ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  command="${1:-}"
+  case "$command" in
+    setup) cmd_setup ;;
+    seed) cmd_seed ;;
+    start) cmd_start ;;
+    check) cmd_check ;;
+    repair-local-history) cmd_repair_local_history ;;
+    validate-migrations) cmd_validate_migrations ;;
+    *) usage; exit 1 ;;
+  esac
+fi

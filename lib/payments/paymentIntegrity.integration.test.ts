@@ -23,6 +23,10 @@ const destinationSql = readFileSync(
   path.join(root, "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql"),
   "utf8",
 );
+const connectOwnershipSql = readFileSync(
+  path.join(root, "supabase/migrations/20261031011022_lock_society_stripe_connect_ownership.sql"),
+  "utf8",
+);
 
 const M4 = "10000000-0000-4000-8000-000000000001";
 const JOINT = "10000000-0000-4000-8000-000000000002";
@@ -1087,6 +1091,136 @@ it("stops unauthorised users redirecting a joint payment and blocks ineligible c
     });
     const ledgerCount = await db.query(`SELECT count(*)::int AS n FROM public.payment_transactions WHERE member_id = $1`, [LEGACY]);
     expect(ledgerCount.rows[0].n).toBe(1);
+  } finally {
+    await db.end();
+  }
+}, 60000);
+
+it("stops M4 and ZGS reusing each other's Stripe Connect account", async () => {
+  const db = await recreate("gsh_connect_ownership_d748");
+  const ZGS = JOINT;
+  const OUTSIDER = "10000000-0000-4000-8000-000000000099";
+  const DUAL_USER = "10000000-0000-4000-8000-000000000018";
+  try {
+    await db.query(fixtureSql);
+    await db.query(foundationSql);
+    await db.query(repairSql);
+    await db.query(guestInviteSql);
+    await db.query(destinationSql);
+    await db.query(connectOwnershipSql);
+    await db.query(`GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role`);
+    await db.query(`GRANT SELECT ON public.societies, public.members TO authenticated`);
+    await db.query(
+      `INSERT INTO public.societies (id, name) VALUES ($1, 'M4'), ($2, 'ZGS'), ($3, 'Outsider')`,
+      [M4, ZGS, OUTSIDER],
+    );
+    await db.query(
+      `UPDATE public.societies
+          SET stripe_connect_account_id = 'acct_m4',
+              stripe_connect_charges_enabled = true
+        WHERE id = $1`,
+      [M4],
+    );
+    await db.query(
+      `UPDATE public.societies SET stripe_connect_account_id = 'acct_zgs' WHERE id = $1`,
+      [ZGS],
+    );
+    await db.query(
+      `INSERT INTO public.members (id, society_id, user_id, role, display_name) VALUES
+        ($1, $2, $3, 'CAPTAIN', 'M4 Captain'),
+        ($4, $5, $3, 'MEMBER', 'Same person at ZGS'),
+        ($6, $5, $7, 'TREASURER', 'ZGS Treasurer'),
+        ($8, $2, $7, 'MEMBER', 'Same treasurer at M4')`,
+      [
+        "10000000-0000-4000-8000-000000000027", M4, DUAL_USER,
+        "10000000-0000-4000-8000-000000000028", ZGS,
+        JOINT_TREASURER, JOINT_TREASURER_USER,
+        "10000000-0000-4000-8000-000000000029",
+      ],
+    );
+
+    const privileges = await db.query(
+      `SELECT
+         has_column_privilege('authenticated', 'public.societies', 'stripe_connect_account_id', 'UPDATE') AS account_update,
+         has_column_privilege('authenticated', 'public.societies', 'stripe_connect_charges_enabled', 'UPDATE') AS charges_update,
+         has_column_privilege('authenticated', 'public.societies', 'name', 'UPDATE') AS name_update,
+         has_column_privilege('service_role', 'public.societies', 'stripe_connect_account_id', 'UPDATE') AS service_account,
+         has_function_privilege('authenticated', 'public.assign_society_stripe_connect_account(uuid,text)', 'EXECUTE') AS member_assign,
+         has_function_privilege('service_role', 'public.assign_society_stripe_connect_account(uuid,text)', 'EXECUTE') AS service_assign`,
+    );
+    expect(privileges.rows[0]).toMatchObject({
+      account_update: false,
+      charges_update: false,
+      name_update: true,
+      service_account: true,
+      member_assign: false,
+      service_assign: true,
+    });
+
+    await asUser(db, DUAL_USER, `UPDATE public.societies SET name = 'M4 renamed' WHERE id = $1`, [M4]);
+    await expectUserError(
+      db,
+      DUAL_USER,
+      `UPDATE public.societies SET stripe_connect_account_id = 'acct_zgs' WHERE id = $1`,
+      [M4],
+      /permission denied|stripe_connect_ownership_locked/,
+    );
+    await expectUserError(
+      db,
+      JOINT_TREASURER_USER,
+      `UPDATE public.societies SET stripe_connect_account_id = 'acct_m4', stripe_connect_charges_enabled = true WHERE id = $1`,
+      [ZGS],
+      /permission denied|stripe_connect_ownership_locked/,
+    );
+    await expectUserError(
+      db,
+      DUAL_USER,
+      `SELECT public.assign_society_stripe_connect_account($1, 'acct_zgs')`,
+      [M4],
+      /permission denied/,
+    );
+
+    await expect(
+      db.query(`UPDATE public.societies SET stripe_connect_account_id = 'acct_zgs' WHERE id = $1`, [M4]),
+    ).rejects.toThrow(/stripe_connect_account_already_bound/);
+    await expect(
+      db.query(`UPDATE public.societies SET stripe_connect_account_id = 'acct_m4' WHERE id = $1`, [ZGS]),
+    ).rejects.toThrow(/stripe_connect_account_already_bound/);
+    await expectRoleError(
+      db,
+      "service_role",
+      `SELECT public.assign_society_stripe_connect_account($1, 'acct_zgs')`,
+      [M4],
+      /stripe_connect_account_already_bound/,
+    );
+    await expectRoleError(
+      db,
+      "service_role",
+      `SELECT public.assign_society_stripe_connect_account($1, 'acct_m4')`,
+      [ZGS],
+      /stripe_connect_account_already_bound/,
+    );
+
+    await asRole(db, "service_role", `SELECT public.assign_society_stripe_connect_account($1, 'acct_outsider')`, [OUTSIDER]);
+    await asRole(
+      db,
+      "service_role",
+      `UPDATE public.societies
+          SET stripe_connect_charges_enabled = true,
+              stripe_connect_details_submitted = true
+        WHERE id = $1`,
+      [OUTSIDER],
+    );
+    const stored = await db.query(
+      `SELECT id, name, stripe_connect_account_id, stripe_connect_charges_enabled
+         FROM public.societies
+        ORDER BY name`,
+    );
+    expect(stored.rows).toEqual([
+      { id: M4, name: "M4 renamed", stripe_connect_account_id: "acct_m4", stripe_connect_charges_enabled: true },
+      { id: OUTSIDER, name: "Outsider", stripe_connect_account_id: "acct_outsider", stripe_connect_charges_enabled: true },
+      { id: ZGS, name: "ZGS", stripe_connect_account_id: "acct_zgs", stripe_connect_charges_enabled: false },
+    ]);
   } finally {
     await db.end();
   }

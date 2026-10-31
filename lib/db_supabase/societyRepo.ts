@@ -2,6 +2,7 @@
 import { supabase } from "@/lib/supabase";
 import { SOCIETY_LOGO_BUCKET, clearSocietyLogoCache } from "@/lib/societyLogo";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { omitStripeConnectOwnershipFields } from "@/lib/db_supabase/societyConnectFields";
 
 export type SocietyDoc = {
   id: string;
@@ -158,9 +159,11 @@ export async function updateSocietyDoc(
   id: string,
   updates: Partial<SocietyDoc>
 ): Promise<void> {
+  const payload = omitStripeConnectOwnershipFields(updates as Record<string, unknown>);
+  if (Object.keys(payload).length === 0) return;
   const { error } = await supabase
     .from("societies")
-    .update(updates)
+    .update(payload)
     .eq("id", id);
 
   if (error) {

@@ -18,6 +18,7 @@ import {
 import { paymentApplyFailureStatus, stripeEventDisposition, verifyPaidCheckout } from "@/lib/payments/webhookVerification";
 import { handleStripeWebhook } from "@/lib/payments/stripeWebhookHandler";
 import { handleConnectOnboarding } from "@/lib/payments/connectOnboarding";
+import { omitStripeConnectOwnershipFields } from "@/lib/db_supabase/societyConnectFields";
 import { handleRefundEventPayment } from "@/lib/payments/refundEventPayment";
 import { handleCreateEventCheckoutSession } from "@/lib/payments/createCheckoutSessionHandler";
 import { handleCreateGuestCheckoutSession } from "@/lib/payments/guestCheckout";
@@ -237,6 +238,7 @@ describe("stripe payment foundation", () => {
         loadCallerRole: async () => "TREASURER",
         loadAccountId: async () => null,
         saveAccountId: async () => undefined,
+        confirmAccountExclusive: async () => undefined,
         createExpressAccount: async () => "acct_new",
         createAccountLink: async () => "https://connect.stripe.com/setup/test",
       },
@@ -266,6 +268,92 @@ describe("stripe payment foundation", () => {
       },
     );
     expect(refund.status).toBe(403);
+  });
+
+  it("binds a new Connect account only to the society that is onboarding", async () => {
+    const saved: { societyId: string; accountId: string }[] = [];
+    const links: string[] = [];
+    const m4 = "22000000-0000-4000-8000-000000000001";
+    const result = await handleConnectOnboarding(
+      { authorizationHeader: "Bearer token", rawBody: { societyId: m4 } },
+      {
+        stripeKey: "sk_test_123",
+        getUserId: async () => "treasurer",
+        loadCallerRole: async () => "TREASURER",
+        loadAccountId: async () => null,
+        saveAccountId: async (id, accountId) => {
+          saved.push({ societyId: id, accountId });
+        },
+        confirmAccountExclusive: async (id, accountId) => {
+          if (id !== m4 || accountId !== "acct_new_m4") throw new Error("stripe_connect_account_already_bound");
+        },
+        createExpressAccount: async () => "acct_new_m4",
+        createAccountLink: async (accountId) => {
+          links.push(accountId);
+          return "https://connect.stripe.com/setup/s/test";
+        },
+      },
+    );
+    expect(result.status).toBe(200);
+    expect(saved).toEqual([{ societyId: m4, accountId: "acct_new_m4" }]);
+    expect(links).toEqual(["acct_new_m4"]);
+    expect(omitStripeConnectOwnershipFields({
+      name: "M4",
+      stripe_connect_account_id: "acct_zgs",
+      stripe_connect_charges_enabled: true,
+      stripeConnectDetailsSubmitted: true,
+    })).toEqual({ name: "M4" });
+  });
+
+  it("does not mint an account link when the Connect account belongs to another society", async () => {
+    const links: string[] = [];
+    const zgs = "22000000-0000-4000-8000-000000000002";
+    const result = await handleConnectOnboarding(
+      { authorizationHeader: "Bearer token", rawBody: { societyId: zgs } },
+      {
+        stripeKey: "sk_test_123",
+        getUserId: async () => "captain",
+        loadCallerRole: async () => "CAPTAIN",
+        loadAccountId: async () => "acct_m4",
+        saveAccountId: async () => {
+          throw new Error("save should not run when an account id is already stored");
+        },
+        confirmAccountExclusive: async () => {
+          throw new Error("stripe_connect_account_already_bound");
+        },
+        createExpressAccount: async () => "acct_should_not_create",
+        createAccountLink: async () => {
+          links.push("link");
+          return "https://connect.stripe.com/setup/s/test";
+        },
+      },
+    );
+    expect(result.status).toBe(409);
+    expect(links).toEqual([]);
+
+    const saved: string[] = [];
+    const created = await handleConnectOnboarding(
+      { authorizationHeader: "Bearer token", rawBody: { societyId: zgs } },
+      {
+        stripeKey: "sk_test_123",
+        getUserId: async () => "captain",
+        loadCallerRole: async () => "CAPTAIN",
+        loadAccountId: async () => null,
+        saveAccountId: async () => {
+          saved.push("saved");
+          throw new Error('duplicate key value violates unique constraint "societies_stripe_connect_account_id_uq"');
+        },
+        confirmAccountExclusive: async () => undefined,
+        createExpressAccount: async () => "acct_m4",
+        createAccountLink: async () => {
+          links.push("link");
+          return "https://connect.stripe.com/setup/s/test";
+        },
+      },
+    );
+    expect(created.status).toBe(409);
+    expect(saved).toEqual(["saved"]);
+    expect(links).toEqual([]);
   });
 
   it("replaces a pending checkout when the fee changed and uses a fresh Stripe idempotency key", async () => {

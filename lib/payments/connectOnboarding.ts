@@ -13,10 +13,19 @@ type ConnectDeps = {
   loadCallerRole: (userId: string, societyId: string) => Promise<string | null>;
   loadAccountId: (societyId: string) => Promise<string | null>;
   saveAccountId: (societyId: string, accountId: string) => Promise<void>;
+  confirmAccountExclusive: (societyId: string, accountId: string) => Promise<void>;
   createExpressAccount: () => Promise<string>;
   createAccountLink: (accountId: string, refreshUrl: string, returnUrl: string) => Promise<string>;
   getUserId: (accessToken: string) => Promise<string | null>;
 };
+
+function connectOwnershipConflict(err: unknown): string | null {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/stripe_connect_account_already_bound|stripe_connect_account_society_mismatch|societies_stripe_connect_account_id_uq|duplicate key/i.test(message)) {
+    return "That Stripe account is already connected to another society";
+  }
+  return null;
+}
 
 function userClient(accessToken: string) {
   const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
@@ -58,11 +67,21 @@ function defaultDeps(): ConnectDeps {
       return (data?.stripe_connect_account_id as string | null) ?? null;
     },
     async saveAccountId(societyId, accountId) {
-      const { error } = await admin
-        .from("societies")
-        .update({ stripe_connect_account_id: accountId })
-        .eq("id", societyId);
+      const { error } = await admin.rpc("assign_society_stripe_connect_account", {
+        p_society_id: societyId,
+        p_account_id: accountId,
+      });
       if (error) throw new Error(error.message);
+    },
+    async confirmAccountExclusive(societyId, accountId) {
+      const { data, error } = await admin
+        .from("societies")
+        .select("id")
+        .eq("stripe_connect_account_id", accountId)
+        .neq("id", societyId)
+        .limit(1);
+      if (error) throw new Error(error.message);
+      if ((data ?? []).length > 0) throw new Error("stripe_connect_account_already_bound");
     },
     async createExpressAccount() {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
@@ -114,7 +133,20 @@ export async function handleConnectOnboarding(
   let accountId = await runtime.loadAccountId(societyId);
   if (!accountId) {
     accountId = await runtime.createExpressAccount();
-    await runtime.saveAccountId(societyId, accountId);
+    try {
+      await runtime.saveAccountId(societyId, accountId);
+    } catch (err) {
+      const owned = connectOwnershipConflict(err);
+      if (owned) return { status: 409, body: { error: owned } };
+      throw err;
+    }
+  }
+  try {
+    await runtime.confirmAccountExclusive(societyId, accountId);
+  } catch (err) {
+    const owned = connectOwnershipConflict(err);
+    if (owned) return { status: 409, body: { error: owned } };
+    throw err;
   }
   const base = serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL);
   const url = await runtime.createAccountLink(

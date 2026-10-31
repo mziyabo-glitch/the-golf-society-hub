@@ -1,6 +1,10 @@
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { hasBillableEventFee, shouldShowHomePaymentRow } from "@/lib/home/homeNextEventPanelModel";
 import { shouldShowEventPaymentRow } from "@/lib/payments/eventPricing";
+import {
+  assessMemberCheckoutEligibility,
+  type MemberCheckoutRegistration,
+} from "@/lib/payments/memberCheckoutEligibility";
 
 export type EventDetailQuickActionId =
   | "players"
@@ -78,6 +82,28 @@ export function shouldShowMemberPaymentStatus(
     return true;
   }
   return shouldShowHomePaymentRow(myRegistration ?? null, entryFeeDisplay);
+}
+
+/**
+ * Pay now visibility. Same attendance inputs as member Checkout, including a
+ * joint `event_entries` status. Passing null means no joint roster row.
+ */
+export function memberPayNowPlaying(input: {
+  memberId: string;
+  registration: MemberCheckoutRegistration | null;
+  playerIds?: readonly string[] | null;
+  eventEntryStatus: string | null;
+  rsvpDeadlineAt?: string | null;
+  now?: Date;
+}): boolean {
+  return assessMemberCheckoutEligibility({
+    memberId: input.memberId,
+    registration: input.registration,
+    playerIds: input.playerIds,
+    eventEntryStatus: input.eventEntryStatus,
+    rsvpDeadlineAt: input.rsvpDeadlineAt,
+    now: input.now,
+  }).ok;
 }
 
 export function shouldShowEntryFeeLine(entryFeeDisplay: string | null | undefined): boolean {

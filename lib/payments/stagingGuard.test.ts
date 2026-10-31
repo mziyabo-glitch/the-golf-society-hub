@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { paymentStagingEnvError } from "@/lib/payments/stagingGuard";
@@ -70,5 +72,64 @@ describe("payment staging guard", () => {
     expect(doc).toContain("20261030200000_guest_payment_invitations.sql");
     expect(doc).toContain("20261030210000_payment_destination_and_checkout_eligibility.sql");
     expect(doc).toContain("eaenzjwecrrbhibrvgsb");
+    const script = readFileSync(path.join(root, "scripts/payments/local-staging.sh"), "utf8");
+    expect(script).toContain("supabase stack status --env --output-format text");
+    expect(script).not.toContain("supabase status --env --output-format text");
+    expect(script).toContain("supabase status -o env");
+    expect(script).toContain("eaenzjwecrrbhibrvgsb");
+    const setup = script.slice(script.indexOf("cmd_setup()"), script.indexOf("cmd_start()"));
+    expect(setup.indexOf("migrate_legacy_staging_env")).toBeGreaterThan(-1);
+    expect(setup.indexOf("migrate_legacy_staging_env")).toBeLessThan(setup.indexOf("ensure_env_file"));
+  });
+
+  it("moves a leftover staging env file before a new password file can be written", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "gsh-staging-env-"));
+    try {
+      writeFileSync(
+        path.join(dir, ".env.staging.local"),
+        "STAGING_ACCOUNT_PASSWORD=abcdefghijklmnopqrstuvwxyz\nEXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321\n",
+      );
+      execFileSync("bash", ["-lc", `
+        set -euo pipefail
+        export STAGING_ROOT="$1"
+        export STAGING_ENV_FILE="$1/staging.local.env"
+        source "$2"
+        migrate_legacy_staging_env
+        test ! -f "$1/.env.staging.local"
+        grep -q '^STAGING_ACCOUNT_PASSWORD=abcdefghijklmnopqrstuvwxyz$' "$1/staging.local.env"
+      `, "bash", dir, path.join(root, "scripts/payments/local-staging.sh")], { stdio: "pipe" });
+
+      writeFileSync(path.join(dir, "staging.local.env"), "STAGING_ACCOUNT_PASSWORD=keep-this-password-value\n");
+      writeFileSync(path.join(dir, ".env.staging.local"), "STAGING_ACCOUNT_PASSWORD=old-legacy-password-value\n");
+      let failed = false;
+      try {
+        execFileSync("bash", ["-lc", `
+          set -euo pipefail
+          export STAGING_ROOT="$1"
+          export STAGING_ENV_FILE="$1/staging.local.env"
+          source "$2"
+          migrate_legacy_staging_env
+        `, "bash", dir, path.join(root, "scripts/payments/local-staging.sh")], { stdio: "pipe" });
+      } catch {
+        failed = true;
+      }
+      expect(failed).toBe(true);
+      expect(readFileSync(path.join(dir, "staging.local.env"), "utf8")).toContain("keep-this-password-value");
+
+      let refused = false;
+      try {
+        execFileSync("bash", ["-lc", `
+          set -euo pipefail
+          export STAGING_ROOT="$1"
+          source "$2"
+          refuse_value SUPABASE_URL "https://eaenzjwecrrbhibrvgsb.supabase.co"
+        `, "bash", dir, path.join(root, "scripts/payments/local-staging.sh")], { stdio: "pipe" });
+      } catch {
+        refused = true;
+      }
+      expect(refused).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

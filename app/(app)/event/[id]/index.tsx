@@ -53,12 +53,13 @@ import {
   shouldShowSocietyAttendanceSummary,
   splitQuickActionsForAudience,
   quickActionCopy,
+  memberPayNowPlaying,
   type EventDetailQuickActionId,
 } from "@/lib/events/eventDetailScreenModel";
+import { fetchMemberEventEntryStatus } from "@/lib/events/memberEventEntryStatus";
 import { resolveHomePlayingStatus } from "@/lib/home/homeNextEventPanelModel";
 import { resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
 import { MemberEventPaymentSection } from "@/components/event-payments/MemberEventPaymentSection";
-import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -318,6 +319,21 @@ export default function EventOverviewScreen() {
     () => getMemberRegistration(registrations, effectiveMemberId),
     [registrations, effectiveMemberId],
   );
+  const [eventEntryStatus, setEventEntryStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!event?.id || !effectiveMemberId) {
+      setEventEntryStatus(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchMemberEventEntryStatus(event.id, effectiveMemberId).then((status) => {
+      if (!cancelled) setEventEntryStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, effectiveMemberId]);
 
   const toggleEventRsvp = useCallback(
     async (newStatus: "in" | "out") => {
@@ -834,7 +850,7 @@ export default function EventOverviewScreen() {
                   amountPence={memberCheckoutPence}
                   playing={
                     effectiveMemberId
-                      ? assessMemberCheckoutEligibility({
+                      ? memberPayNowPlaying({
                           memberId: effectiveMemberId,
                           registration: myRegistration
                             ? {
@@ -843,8 +859,9 @@ export default function EventOverviewScreen() {
                               }
                             : null,
                           playerIds: event?.playerIds,
+                          eventEntryStatus,
                           rsvpDeadlineAt: event?.rsvpDeadlineAt ?? event?.rsvp_deadline_at ?? null,
-                        }).ok
+                        })
                       : false
                   }
                   paid={myRegistration?.paid === true}

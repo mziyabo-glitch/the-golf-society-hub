@@ -7,6 +7,6 @@
 .env.local
 .env.*.local
 .link.json
-..link.json.*.tmp
+.link.json.*.tmp
 .supabase.lock.*.tmp
 .supabase.lock.lease
