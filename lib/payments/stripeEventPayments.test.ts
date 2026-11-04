@@ -120,6 +120,7 @@ describe("stripe payment foundation", () => {
       "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql",
       "supabase/migrations/20261104021500_staging_platform_charge_apply.sql",
       "supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql",
+      "supabase/migrations/20261104160000_replace_society_own_connect_account.sql",
     ]) {
       const version = path.basename(file).slice(0, 14);
       const hour = Number(version.slice(8, 10));
@@ -146,6 +147,15 @@ describe("stripe payment foundation", () => {
     expect(ownSocietySql).toContain("IS DISTINCT FROM p_payer_society_id");
     expect(ownSocietySql).not.toContain("GRANT UPDATE (payment_beneficiary_society_id)");
     expect(ownSocietySql).not.toContain("eaenzjwecrrbhibrvgsb.supabase.co");
+    const replaceSql = readFileSync(
+      path.join(root, "supabase/migrations/20261104160000_replace_society_own_connect_account.sql"),
+      "utf8",
+    );
+    expect(replaceSql).toContain("stripe_connect_account_already_bound");
+    expect(replaceSql).toContain("SET stripe_connect_account_id = v_account");
+    expect(replaceSql).not.toContain("stripe_connect_account_id IS NULL");
+    expect(replaceSql).toContain("payment_mutation_from_end_user");
+    expect(replaceSql).not.toContain("GRANT EXECUTE ON FUNCTION public.assign_society_stripe_connect_account");
   });
 
   it("keeps online pay now off unless Connect is ready and the player is playing and unpaid", () => {
