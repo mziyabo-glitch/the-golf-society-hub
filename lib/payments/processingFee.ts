@@ -1,55 +1,40 @@
 /**
- * Card processing fees and the Golf Society Hub platform fee.
+ * Golf Society Hub platform fee on a Stripe Connect direct charge.
  *
- * Stripe UK consumer-card pricing stays in `DEFAULT_PROCESSING_FEE_SCHEDULE`:
- * 1.5% + 20 pence. Do not edit that schedule to match a later actual Stripe
- * fee. The ledger stores the balance transaction's stripe_fee, and player-pays
- * variance is that actual fee minus the card portion of the quote.
- *
- * Golf Society Hub charges its own platform fee on each Connect destination
- * charge. The rate is `PLATFORM_FEE_BASIS_POINTS` (200 = 2.00% of the intended
- * event fee). Whole pence, half up:
+ * The rate is `PLATFORM_FEE_BASIS_POINTS` (200 = 2.00% of the intended event
+ * fee). Whole pence, half up:
  *   platform_fee = floor((intended_pence * basis_points + 5000) / 10000)
- * 2500 pence -> 50. 333 pence at 2% is 6.66 -> 7. 25 pence at 2% is 0.5 -> 1.
- * The fee is computed on the intended event fee, not on the grossed-up total.
- * Checkout sends it as Stripe Connect `application_fee_amount`.
+ * 2500 pence -> 50. 4500 pence -> 90. 333 pence at 2% is 6.66 -> 7.
+ * Checkout sends it as `application_fee_amount` on a direct charge created
+ * with the Stripe-Account header. There is no `transfer_data` and no
+ * `on_behalf_of`. The connected account pays Stripe's card fee. The platform
+ * keeps the application fee. Society net from that connected-account balance
+ * transaction is gross minus the stripe_fee minus the application fee.
+ *
+ * Player pays is removed until a professional has reviewed UK surcharge rules.
+ * `quoteCheckoutCharge` ignores a stored `player_pays` value and charges the
+ * event fee exactly. `grossUpChargePence` remains only so the old 1.5% + 20p
+ * schedule is not quietly rewritten. Checkout does not call it.
  *
  * A staging platform-only charge (`STAGING_PLATFORM_ONLY_PAYMENTS` exactly
- * true, no Connect destination) has no application fee. Pass
- * `platformCharge: true` so the quote's platform fee is 0 and Checkout omits
- * `application_fee_amount`.
- *
- * Society absorbs (default): Checkout charges the event fee exactly. The
- * destination charge sets `on_behalf_of` to the Connect account. Whether the
- * card fee is then debited from that account depends on the account
- * controller: a test Custom account with `fees.payer` of `application_custom`
- * still showed the card fee on the platform balance transaction. Society net
- * is the connected account's balance-transaction net when that transaction
- * exists. The card fee is still the `stripe_fee` detail, recorded separately.
- *
- * Player pays: one processing line covers the estimated card fee and the
- * platform fee.
- *   charged = ceil((intended + card_fixed + platform_fee) / (1 - card_rate))
- * The quoted total is intended to leave the society the event fee after both.
- * The card rate is still the schedule above.
+ * true, and the society has no charges-enabled Connect account) has no
+ * application fee and no Stripe-Account header.
  *
  * The payment row snapshots `platform_fee_basis_points` and
  * `platform_fee_pence`. A later rate change does not rewrite that row. The
  * recorded Stripe fee and the recorded application fee come only from Stripe
  * objects, never from this quote.
  *
- * A full Connect refund sets `refund_application_fee: true` so Stripe returns
- * the platform fee with the charge. The ledger does not invent a fee on the
- * refund row. It keeps the actuals already taken from the charge, and records
- * `stripe_application_fee_refunded_pence` only from Stripe's ApplicationFee
- * `amount_refunded`.
+ * A full direct-charge refund sets `refund_application_fee: true` so Stripe
+ * returns the platform fee. It does not set `reverse_transfer`, because a
+ * direct charge has no transfer. The ledger does not invent a fee on the
+ * refund row. `stripe_application_fee_refunded_pence` comes only from Stripe's
+ * ApplicationFee `amount_refunded`.
  */
 
 export const STRIPE_UK_CARD_FEE_BASIS_POINTS = 150;
 export const STRIPE_UK_CARD_FEE_FIXED_PENCE = 20;
 export const PLATFORM_FEE_BASIS_POINTS = 200;
-
-export const PLAYER_PROCESSING_FEE_LABEL = "Processing fee (card fee and Golf Society Hub platform fee)";
 
 export type ProcessingFeeMode = "society_absorbs" | "player_pays";
 
@@ -97,7 +82,10 @@ export function platformFeePence(intendedPence: number, basisPoints: number = PL
   return Math.floor((intendedPence * basisPoints + 5000) / 10000);
 }
 
-/** Integer ceiling of (intended + fixed + extra) / (1 - basis_points/10000). */
+/**
+ * Old player-pays gross-up. Checkout does not call this.
+ * Player pays is removed until a professional has reviewed UK surcharge rules.
+ */
 export function grossUpChargePence(
   intendedPence: number,
   schedule: ProcessingFeeSchedule = DEFAULT_PROCESSING_FEE_SCHEDULE,
@@ -122,34 +110,20 @@ export function grossUpChargePence(
 
 export function quoteCheckoutCharge(
   intendedPence: number,
-  mode: string | null | undefined,
+  _mode: string | null | undefined,
   schedule: ProcessingFeeSchedule = DEFAULT_PROCESSING_FEE_SCHEDULE,
   options: { platformCharge?: boolean } = {},
 ): CheckoutChargeQuote {
+  // Player pays is removed until a professional has reviewed UK surcharge rules.
+  // A stored player_pays value does not change the amount charged.
   const platformCharge = options.platformCharge === true;
   const platformFeeBasisPoints = platformCharge ? 0 : PLATFORM_FEE_BASIS_POINTS;
   const feePence = platformCharge ? 0 : platformFeePence(intendedPence, PLATFORM_FEE_BASIS_POINTS);
-  const normalized = normalizeProcessingFeeMode(mode);
-  if (normalized === "society_absorbs") {
-    return {
-      mode: normalized,
-      intendedPence,
-      estimatedProcessingFeePence: 0,
-      grossPence: intendedPence,
-      basisPoints: schedule.basisPoints,
-      fixedPence: schedule.fixedPence,
-      platformFeeBasisPoints,
-      platformFeePence: feePence,
-      applicationFeeAmount: feePence,
-      platformCharge,
-    };
-  }
-  const grossPence = grossUpChargePence(intendedPence, schedule, feePence);
   return {
-    mode: normalized,
+    mode: "society_absorbs",
     intendedPence,
-    estimatedProcessingFeePence: grossPence - intendedPence,
-    grossPence,
+    estimatedProcessingFeePence: 0,
+    grossPence: intendedPence,
     basisPoints: schedule.basisPoints,
     fixedPence: schedule.fixedPence,
     platformFeeBasisPoints,
@@ -215,10 +189,12 @@ type FeeBalance = {
 /**
  * Split Stripe objects into the card fee, the application fee, and the
  * society net. The card fee is the `stripe_fee` detail. The application fee
- * is the charge amount, checked against any `application_fee` detail. Society
- * net is the connected-account balance transaction net when that transaction
- * is supplied. A platform balance that does not contain the application fee
- * is not turned into a guessed society net.
+ * is the charge amount, checked against any `application_fee` detail. A direct
+ * charge balance transaction contains both details, and its net is the society
+ * net: gross minus the card fee minus the application fee. An older
+ * destination-charge pair is still accepted when the card fee stayed on the
+ * platform balance. A balance that does not explain the application fee is
+ * not turned into a guessed society net.
  */
 export function actualFeesFromStripe(input: {
   balance: FeeBalance | null | undefined;

@@ -118,7 +118,7 @@ for key in order:
 if "STRIPE_SECRET_KEY" not in vals:
     lines.append("# STRIPE_SECRET_KEY=sk_test_...")
 if "STRIPE_WEBHOOK_SECRET" not in vals:
-    lines.append("# STRIPE_WEBHOOK_SECRET=  # stripe listen --forward-to http://127.0.0.1:3001/api/stripe/webhook")
+    lines.append("# STRIPE_WEBHOOK_SECRET=  # stripe listen --forward-to http://127.0.0.1:3001/api/stripe/webhook --forward-connect-to http://127.0.0.1:3001/api/stripe/webhook")
 path.write_text("\n".join(lines) + "\n")
 path.chmod(0o600)
 print(f"Wrote {path}. The staging password was not printed.")

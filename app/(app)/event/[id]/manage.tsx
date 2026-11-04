@@ -41,7 +41,6 @@ import {
 import { getJointEventDetail, getJointMetaForEventIds, mapJointEventToEventDoc, updateJointEvent, validateJointEventInput } from "@/lib/db_supabase/jointEventRepo";
 import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
-import { ProcessingFeeModeField } from "@/components/event-payments/ProcessingFeeModeField";
 import { ManageEventSection } from "@/components/event/ManageEventSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
 import type { JointEventEntry } from "@/lib/db_supabase/jointEventTypes";
@@ -2156,7 +2155,6 @@ export default function ManageEventScreen() {
               <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
                 Shown on the home screen and here.
               </AppText>
-              {permissions.canManageMembershipFees ? <ProcessingFeeModeField societyId={societyId} /> : null}
             </View>
 
             <View style={styles.formField}>

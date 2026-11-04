@@ -35,6 +35,7 @@ function memberDeps(opts: {
   connectAccountId: string | null;
   created: Stripe.Checkout.SessionCreateParams[];
   inserted: PendingPaymentInsert[];
+  stripeAccounts?: Array<string | null>;
 }) {
   return {
     stripeKey: "sk_test_unit",
@@ -68,8 +69,9 @@ function memberDeps(opts: {
         throw new Error("should not retrieve");
       },
       expireSession: async () => undefined,
-      createSession: async (params: Stripe.Checkout.SessionCreateParams) => {
+      createSession: async (params: Stripe.Checkout.SessionCreateParams, _key?: string, stripeAccount?: string | null) => {
         opts.created.push(params);
+        opts.stripeAccounts?.push(stripeAccount ?? null);
         return { id: "cs_platform", url: "https://checkout.stripe.test/c/pay" };
       },
     },
@@ -160,7 +162,6 @@ describe("staging platform charges", () => {
     expect(refundCreateParams("pi_platform", null)).toEqual({ payment_intent: "pi_platform" });
     expect(refundCreateParams("pi_connect", "acct_ready")).toEqual({
       payment_intent: "pi_connect",
-      reverse_transfer: true,
       refund_application_fee: true,
     });
   });
@@ -168,6 +169,7 @@ describe("staging platform charges", () => {
   it("flag off still requires a charges-enabled Connect account", async () => {
     const created: Stripe.Checkout.SessionCreateParams[] = [];
     const inserted: PendingPaymentInsert[] = [];
+    const connectAccounts: Array<string | null> = [];
     const member = await handleCreateEventCheckoutSession(
       {
         authorizationHeader: "Bearer token",
@@ -183,13 +185,14 @@ describe("staging platform charges", () => {
         idempotencyKey: "idem-1234",
         rawBody: { eventId, societyId, payerType: "member" },
       },
-      memberDeps({ env: offEnv, chargesEnabled: true, connectAccountId: "acct_ready", created, inserted }),
+      memberDeps({ env: offEnv, chargesEnabled: true, connectAccountId: "acct_ready", created, inserted, stripeAccounts: connectAccounts }),
     );
     expect(ready.status).toBe(200);
     expect(created).toHaveLength(1);
-    expect(created[0]?.payment_intent_data?.transfer_data?.destination).toBe("acct_ready");
-    expect(created[0]?.payment_intent_data?.on_behalf_of).toBe("acct_ready");
+    expect(created[0]?.payment_intent_data?.transfer_data).toBeUndefined();
+    expect(created[0]?.payment_intent_data?.on_behalf_of).toBeUndefined();
     expect(created[0]?.payment_intent_data?.application_fee_amount).toBe(50);
+    expect(connectAccounts).toEqual(["acct_ready"]);
     expect(inserted[0]?.platformFeePence).toBe(50);
     expect(created[0]?.metadata?.[STAGING_PLATFORM_CHARGE_METADATA_KEY]).toBeUndefined();
     expect(inserted[0]?.stripeConnectAccountId).toBe("acct_ready");
@@ -206,13 +209,14 @@ describe("staging platform charges", () => {
   it("flag on without charges creates a platform session and keeps Connect when charges are enabled", async () => {
     const created: Stripe.Checkout.SessionCreateParams[] = [];
     const inserted: PendingPaymentInsert[] = [];
+    const flagOnAccounts: Array<string | null> = [];
     const platform = await handleCreateEventCheckoutSession(
       {
         authorizationHeader: "Bearer token",
         idempotencyKey: "idem-1234",
         rawBody: { eventId, societyId, payerType: "member" },
       },
-      memberDeps({ env: safeEnv, chargesEnabled: false, connectAccountId: "acct_stored", created, inserted }),
+      memberDeps({ env: safeEnv, chargesEnabled: false, connectAccountId: "acct_stored", created, inserted, stripeAccounts: flagOnAccounts }),
     );
     expect(platform.status).toBe(200);
     expect(created[0]?.payment_intent_data).toBeUndefined();
@@ -246,10 +250,12 @@ describe("staging platform charges", () => {
         idempotencyKey: "idem-5678",
         rawBody: { eventId, societyId, payerType: "member" },
       },
-      memberDeps({ env: safeEnv, chargesEnabled: true, connectAccountId: "acct_ready", created: connectCreated, inserted: [] }),
+      memberDeps({ env: safeEnv, chargesEnabled: true, connectAccountId: "acct_ready", created: connectCreated, inserted: [], stripeAccounts: flagOnAccounts }),
     );
     expect(connect.status).toBe(200);
-    expect(connectCreated[0]?.payment_intent_data?.transfer_data?.destination).toBe("acct_ready");
+    expect(connectCreated[0]?.payment_intent_data?.application_fee_amount).toBe(50);
+    expect(connectCreated[0]?.payment_intent_data?.transfer_data).toBeUndefined();
+    expect(flagOnAccounts).toEqual([null, "acct_ready"]);
     expect(connectCreated[0]?.metadata?.[STAGING_PLATFORM_CHARGE_METADATA_KEY]).toBeUndefined();
     expect(sessionParams({
       amountPence: 2500,

@@ -23,11 +23,12 @@ type RefundTransaction = {
 };
 
 /**
- * Full refund of the charged PaymentIntent. A Connect destination charge also
- * reverses the transfer and sets `refund_application_fee: true`, so Stripe
- * returns Golf Society Hub's platform fee with a full refund. A staging
- * platform-only charge has no application fee and does not set that flag.
- * The ledger does not invent a fee on the refund row.
+ * Full refund of the charged PaymentIntent. A direct charge on a connected
+ * account is refunded with the Stripe-Account header and
+ * `refund_application_fee: true`, so Stripe returns Golf Society Hub's
+ * platform fee. `reverse_transfer` is not set: a direct charge has no
+ * transfer. A staging platform-only charge has no application fee and does
+ * not set that flag. The ledger does not invent a fee on the refund row.
  */
 export function refundCreateParams(
   paymentIntentId: string,
@@ -35,7 +36,6 @@ export function refundCreateParams(
 ): Stripe.RefundCreateParams {
   const params: Stripe.RefundCreateParams = { payment_intent: paymentIntentId };
   if (connectAccountId?.trim()) {
-    params.reverse_transfer = true;
     params.refund_application_fee = true;
   }
   return params;
@@ -47,7 +47,7 @@ type RefundDeps = {
   loadCallerRole: (userId: string, societyId: string) => Promise<string | null>;
   loadTransaction: (id: string) => Promise<RefundTransaction | null>;
   createRefund: (paymentIntentId: string, idempotencyKey: string, connectAccountId?: string | null) => Promise<StripeRefundCheck>;
-  retrieveRefund: (refundId: string) => Promise<StripeRefundCheck | null>;
+  retrieveRefund: (refundId: string, stripeAccount?: string | null) => Promise<StripeRefundCheck | null>;
   recordRefund: (transactionId: string, refundId: string, status: RefundRecordStatus) => Promise<void>;
   recordApplicationFeeRefund?: (transactionId: string, refundedPence: number) => Promise<void>;
 };
@@ -58,6 +58,23 @@ function applicationFeeRefundedPence(refund: Stripe.Refund): number | null {
   const fee = charge.application_fee;
   if (!fee || typeof fee === "string") return null;
   return typeof fee.amount_refunded === "number" ? fee.amount_refunded : null;
+}
+
+async function mapRefundWithPlatformFee(stripe: Stripe, refund: Stripe.Refund): Promise<StripeRefundCheck> {
+  const mapped = mapRefund(refund);
+  if (mapped.applicationFeeRefundedPence != null) return mapped;
+  const charge = refund.charge;
+  if (!charge || typeof charge === "string") return mapped;
+  const fee = charge.application_fee;
+  const feeId = !fee ? "" : typeof fee === "string" ? fee : fee.id;
+  if (!feeId) return mapped;
+  try {
+    const applicationFee = await stripe.applicationFees.retrieve(feeId);
+    return { ...mapped, applicationFeeRefundedPence: applicationFee.amount_refunded };
+  } catch (err) {
+    console.error("[stripe refund] application fee:", (err as Error).message);
+    return mapped;
+  }
 }
 
 function mapRefund(refund: Stripe.Refund): StripeRefundCheck {
@@ -108,18 +125,27 @@ function defaultDeps(): RefundDeps {
     },
     async createRefund(paymentIntentId, idempotencyKey, connectAccountId) {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
+      const account = connectAccountId?.trim() || "";
       const refund = await stripe.refunds.create(
         {
           ...refundCreateParams(paymentIntentId, connectAccountId),
           expand: ["charge.application_fee"],
         },
-        { idempotencyKey },
+        { idempotencyKey, ...(account ? { stripeAccount: account } : {}) },
       );
-      return mapRefund(refund);
+      return mapRefundWithPlatformFee(stripe, refund);
     },
-    async retrieveRefund(refundId) {
+    async retrieveRefund(refundId, stripeAccount) {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
-      return mapRefund(await stripe.refunds.retrieve(refundId, { expand: ["charge.application_fee"] }));
+      const account = stripeAccount?.trim() || "";
+      return mapRefundWithPlatformFee(
+        stripe,
+        await stripe.refunds.retrieve(
+          refundId,
+          { expand: ["charge.application_fee"] },
+          account ? { stripeAccount: account } : undefined,
+        ),
+      );
     },
     async recordRefund(transactionId, refundId, status) {
       const { error } = await admin.rpc("record_event_stripe_refund", {
@@ -198,7 +224,7 @@ export async function handleRefundEventPayment(
       return { status: 200, body: { refundId: transaction.stripe_refund_id, refundStatus: "succeeded" } };
     }
     if (transaction.status === "refund_pending" && transaction.stripe_refund_id) {
-      const existing = await runtime.retrieveRefund(transaction.stripe_refund_id);
+      const existing = await runtime.retrieveRefund(transaction.stripe_refund_id, transaction.stripe_connect_account_id);
       if (!existing) return { status: 422, body: { error: "Stripe refund could not be confirmed" } };
       return await recordVerifiedRefund(runtime, transaction, existing);
     }
@@ -211,7 +237,7 @@ export async function handleRefundEventPayment(
       `refund_${idempotencyKey}`,
       transaction.stripe_connect_account_id,
     );
-    const confirmed = await runtime.retrieveRefund(created.id);
+    const confirmed = await runtime.retrieveRefund(created.id, transaction.stripe_connect_account_id);
     if (!confirmed || confirmed.id !== created.id) {
       return { status: 422, body: { error: "Stripe refund could not be confirmed" } };
     }

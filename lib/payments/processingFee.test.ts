@@ -41,33 +41,29 @@ describe("processing fee quote", () => {
     expect(quoteCheckoutCharge(2500, "unset").grossPence).toBe(2500);
   });
 
-  it("grosses up player-pays charges so the quote covers the card fee and the platform fee", () => {
+  it("ignores a stored player-pays mode and charges the event fee exactly", () => {
     expect(grossUpChargePence(2500)).toBe(2559);
     expect(platformFeePence(2500)).toBe(50);
+    expect(platformFeePence(4500)).toBe(90);
     expect(platformFeePence(333)).toBe(7);
     expect(platformFeePence(25)).toBe(1);
     expect(platformFeePence(1)).toBe(0);
     const quote = quoteCheckoutCharge(2500, "player_pays");
     expect(quote).toMatchObject({
-      mode: "player_pays",
+      mode: "society_absorbs",
       intendedPence: 2500,
-      estimatedProcessingFeePence: 110,
-      grossPence: 2610,
-      basisPoints: 150,
-      fixedPence: 20,
+      estimatedProcessingFeePence: 0,
+      grossPence: 2500,
       platformFeeBasisPoints: 200,
       platformFeePence: 50,
       applicationFeeAmount: 50,
     });
-    expect(quote.grossPence - quote.intendedPence - quote.platformFeePence).toBe(60);
-    const custom = quoteCheckoutCharge(1000, "player_pays", { basisPoints: 200, fixedPence: 10 });
-    expect(custom.grossPence).toBe(grossUpChargePence(1000, { basisPoints: 200, fixedPence: 10 }, platformFeePence(1000)));
-    expect(custom.estimatedProcessingFeePence).toBe(custom.grossPence - 1000);
-    expect(grossUpChargePence(100, { basisPoints: 0, fixedPence: 0 })).toBe(100);
+    expect(quoteCheckoutCharge(4500, "player_pays").grossPence).toBe(4500);
+    expect(quoteCheckoutCharge(4500, "player_pays").applicationFeeAmount).toBe(90);
     const staging = quoteCheckoutCharge(2500, "player_pays", undefined, { platformCharge: true });
     expect(staging.platformFeePence).toBe(0);
     expect(staging.applicationFeeAmount).toBe(0);
-    expect(staging.grossPence).toBe(2559);
+    expect(staging.grossPence).toBe(2500);
     expect(quoteCheckoutCharge(2500, "society_absorbs", undefined, { platformCharge: true }).applicationFeeAmount).toBe(0);
   });
 
@@ -167,7 +163,6 @@ describe("processing fee quote", () => {
     }).ok).toBe(true);
     expect(refundCreateParams("pi_test", "acct_ready")).toEqual({
       payment_intent: "pi_test",
-      reverse_transfer: true,
       refund_application_fee: true,
     });
     expect(refundCreateParams("pi_test", null)).toEqual({ payment_intent: "pi_test" });

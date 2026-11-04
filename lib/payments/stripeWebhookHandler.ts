@@ -31,7 +31,7 @@ export type StripeWebhookDeps = {
   constructEvent: (rawBody: string, signature: string, secret: string) => Stripe.Event;
   loadTransaction: (id: string) => Promise<PaymentTransactionCheck | null>;
   loadBeneficiaryConnectAccount: (societyId: string) => Promise<string | null>;
-  retrievePaymentIntent: (id: string) => Promise<PaymentIntentCheck | null>;
+  retrievePaymentIntent: (id: string, stripeAccount?: string | null) => Promise<PaymentIntentCheck | null>;
   applyPayment: (payment: ApplyPayment) => Promise<void>;
   recordProcessingFee?: (fee: {
     transactionId: string;
@@ -40,7 +40,7 @@ export type StripeWebhookDeps = {
     netPence: number;
     applicationFeePence: number;
   }) => Promise<void>;
-  retrieveBalanceTransaction?: (id: string) => Promise<{
+  retrieveBalanceTransaction?: (id: string, stripeAccount?: string | null) => Promise<{
     amount: number;
     fee: number;
     net: number;
@@ -53,11 +53,20 @@ export type StripeWebhookDeps = {
     detailsSubmitted: boolean;
   }) => Promise<void>;
   loadTransactionByPaymentIntent?: (paymentIntentId: string) => Promise<PaymentTransactionCheck | null>;
-  retrieveRefund?: (refundId: string) => Promise<StripeRefundCheck | null>;
+  retrieveRefund?: (refundId: string, stripeAccount?: string | null) => Promise<StripeRefundCheck | null>;
   recordRefund?: (transactionId: string, refundId: string, status: "pending" | "succeeded" | "failed") => Promise<void>;
   recordApplicationFeeRefund?: (transactionId: string, refundedPence: number) => Promise<void>;
   consumeGuestInvitation?: (guestId: string) => Promise<void>;
 };
+
+function eventAccountId(event: { account?: string | null }): string {
+  return typeof event.account === "string" ? event.account.trim() : "";
+}
+
+function stripeAccountOptions(stripeAccount?: string | null): Stripe.RequestOptions | undefined {
+  const account = stripeAccount?.trim() || "";
+  return account ? { stripeAccount: account } : undefined;
+}
 
 function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY?.trim();
@@ -144,29 +153,36 @@ function defaultDeps(): StripeWebhookDeps {
       if (error) throw new Error(error.message);
       return (data?.stripe_connect_account_id as string | null) ?? null;
     },
-    async retrievePaymentIntent(id) {
-      const intent = await stripe.paymentIntents.retrieve(id, {
-        expand: ["latest_charge.balance_transaction", "latest_charge.transfer"],
-      });
+    async retrievePaymentIntent(id, stripeAccount) {
+      const account = stripeAccount?.trim() || "";
+      const intent = await stripe.paymentIntents.retrieve(
+        id,
+        { expand: ["latest_charge.balance_transaction", "latest_charge.transfer"] },
+        stripeAccountOptions(account),
+      );
       const charge = intent.latest_charge && typeof intent.latest_charge !== "string" ? intent.latest_charge : null;
       const balance = balanceFromCharge(charge);
       let destinationBalance: PaymentIntentCheck["destinationBalanceTransaction"] = null;
-      const transferId = !charge?.transfer
-        ? ""
-        : typeof charge.transfer === "string"
-          ? charge.transfer
-          : charge.transfer.id;
-      if (transferId) {
-        try {
-          const transfer = await stripe.transfers.retrieve(transferId, {
-            expand: ["destination_payment.balance_transaction"],
-          });
-          const destinationPayment = transfer.destination_payment;
-          const destinationCharge = destinationPayment && typeof destinationPayment !== "string" ? destinationPayment : null;
-          const destination = balanceFromCharge(destinationCharge);
-          if (destination && destination.amount === intent.amount) destinationBalance = destination;
-        } catch (err) {
-          console.error("[stripe webhook] destination balance:", (err as Error).message);
+      const legacyDestination = connectedDestinationAccountId(intent);
+      // A direct charge is read on the connected account. Do not also follow a transfer.
+      if (!account) {
+        const transferId = !charge?.transfer
+          ? ""
+          : typeof charge.transfer === "string"
+            ? charge.transfer
+            : charge.transfer.id;
+        if (transferId) {
+          try {
+            const transfer = await stripe.transfers.retrieve(transferId, {
+              expand: ["destination_payment.balance_transaction"],
+            });
+            const destinationPayment = transfer.destination_payment;
+            const destinationCharge = destinationPayment && typeof destinationPayment !== "string" ? destinationPayment : null;
+            const destination = balanceFromCharge(destinationCharge);
+            if (destination && destination.amount === intent.amount) destinationBalance = destination;
+          } catch (err) {
+            console.error("[stripe webhook] destination balance:", (err as Error).message);
+          }
         }
       }
       return {
@@ -174,15 +190,15 @@ function defaultDeps(): StripeWebhookDeps {
         amount: intent.amount,
         currency: intent.currency,
         status: intent.status,
-        destinationAccountId: connectedDestinationAccountId(intent),
+        destinationAccountId: account && legacyDestination ? null : account || legacyDestination,
         applicationFeeAmount: intent.application_fee_amount ?? charge?.application_fee_amount ?? null,
         receiptUrl: receiptUrl(intent),
         balanceTransaction: balance,
         destinationBalanceTransaction: destinationBalance,
       };
     },
-    async retrieveBalanceTransaction(id) {
-      const balance = await stripe.balanceTransactions.retrieve(id);
+    async retrieveBalanceTransaction(id, stripeAccount) {
+      const balance = await stripe.balanceTransactions.retrieve(id, stripeAccountOptions(stripeAccount));
       return {
         amount: balance.amount,
         fee: balance.fee,
@@ -237,8 +253,25 @@ function defaultDeps(): StripeWebhookDeps {
       if (error) throw new Error(error.message);
       return (data as PaymentTransactionCheck | null) ?? null;
     },
-    async retrieveRefund(refundId) {
-      return mapRefund(await stripe.refunds.retrieve(refundId, { expand: ["charge.application_fee"] }));
+    async retrieveRefund(refundId, stripeAccount) {
+      const refund = await stripe.refunds.retrieve(
+        refundId,
+        { expand: ["charge.application_fee"] },
+        stripeAccountOptions(stripeAccount),
+      );
+      const mapped = mapRefund(refund);
+      if (mapped.applicationFeeRefundedPence != null) return mapped;
+      const charge = refund.charge;
+      const fee = charge && typeof charge !== "string" ? charge.application_fee : null;
+      const feeId = !fee ? "" : typeof fee === "string" ? fee : fee.id;
+      if (!feeId) return mapped;
+      try {
+        const applicationFee = await stripe.applicationFees.retrieve(feeId);
+        return { ...mapped, applicationFeeRefundedPence: applicationFee.amount_refunded };
+      } catch (err) {
+        console.error("[stripe webhook] application fee:", (err as Error).message);
+        return mapped;
+      }
     },
     async recordRefund(transactionId, refundId, status) {
       const { error } = await admin.rpc("record_event_stripe_refund", {
@@ -309,6 +342,7 @@ export async function handleStripeWebhook(
 
   if (disposition === "balance") {
     const charge = event.data.object as Stripe.Charge;
+    const connectAccount = eventAccountId(event);
     const paymentIntentId = typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id ?? "";
     if (!paymentIntentId || !runtime.loadTransactionByPaymentIntent || !runtime.recordProcessingFee) {
       return { status: 200, body: { received: true } };
@@ -317,8 +351,9 @@ export async function handleStripeWebhook(
       const transaction = await runtime.loadTransactionByPaymentIntent(paymentIntentId);
       if (!transaction) return { status: 200, body: { received: true } };
       let balance = balanceFromCharge(charge);
+      const feeAccount = connectAccount || transaction.stripe_connect_account_id || null;
       if (!balance && typeof charge.balance_transaction === "string" && runtime.retrieveBalanceTransaction) {
-        balance = await runtime.retrieveBalanceTransaction(charge.balance_transaction);
+        balance = await runtime.retrieveBalanceTransaction(charge.balance_transaction, feeAccount);
       }
       const applicationFeeAmount = charge.application_fee_amount;
       let fees = actualFeesFromStripe({
@@ -327,7 +362,7 @@ export async function handleStripeWebhook(
         applicationFeeAmount,
       });
       if (!fees && runtime.retrievePaymentIntent) {
-        const intent = await runtime.retrievePaymentIntent(paymentIntentId);
+        const intent = await runtime.retrievePaymentIntent(paymentIntentId, feeAccount);
         fees = actualFeesFromStripe({
           balance: intent?.balanceTransaction,
           destinationBalance: intent?.destinationBalanceTransaction,
@@ -356,7 +391,7 @@ export async function handleStripeWebhook(
       return { status: 500, body: { error: "Refund recording is not configured" } };
     }
     try {
-      const refund = await runtime.retrieveRefund(hinted.id);
+      const refund = await runtime.retrieveRefund(hinted.id, eventAccountId(event) || null);
       if (!refund || refund.id !== hinted.id || !refund.paymentIntentId) {
         return { status: 422, body: { error: "Stripe refund could not be confirmed" } };
       }
@@ -390,7 +425,8 @@ export async function handleStripeWebhook(
       ? await runtime.loadBeneficiaryConnectAccount(beneficiaryId)
       : null;
     const paymentIntentId = sessionPaymentIntentId(session);
-    const paymentIntent = paymentIntentId ? await runtime.retrievePaymentIntent(paymentIntentId) : null;
+    const directAccount = eventAccountId(event) || transaction?.stripe_connect_account_id || null;
+    const paymentIntent = paymentIntentId ? await runtime.retrievePaymentIntent(paymentIntentId, directAccount) : null;
     const verified = verifyPaidCheckout({
       stripeEventId: event.id,
       session: {

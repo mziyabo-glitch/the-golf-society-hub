@@ -8,8 +8,6 @@ import {
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import {
   PLATFORM_FEE_BASIS_POINTS,
-  PLAYER_PROCESSING_FEE_LABEL,
-  normalizeProcessingFeeMode,
   platformFeePence,
   type ProcessingFeeMode,
 } from "@/lib/payments/processingFee";
@@ -39,9 +37,13 @@ export type CheckoutSessionSnapshot = {
 };
 
 export type CheckoutStripe = {
-  retrieveSession: (id: string) => Promise<CheckoutSessionSnapshot>;
-  expireSession: (id: string) => Promise<void>;
-  createSession: (params: Stripe.Checkout.SessionCreateParams, idempotencyKey: string) => Promise<{ id: string; url: string | null }>;
+  retrieveSession: (id: string, stripeAccount?: string | null) => Promise<CheckoutSessionSnapshot>;
+  expireSession: (id: string, stripeAccount?: string | null) => Promise<void>;
+  createSession: (
+    params: Stripe.Checkout.SessionCreateParams,
+    idempotencyKey: string,
+    stripeAccount?: string | null,
+  ) => Promise<{ id: string; url: string | null }>;
 };
 
 export type PendingPaymentInsert = {
@@ -105,26 +107,56 @@ export type RunCheckoutInput = {
   store: CheckoutStore;
 };
 
+function stripeAccountOptions(stripeAccount?: string | null): Stripe.RequestOptions | undefined {
+  const account = stripeAccount?.trim() || "";
+  return account ? { stripeAccount: account } : undefined;
+}
+
+function mapSession(session: Stripe.Checkout.Session): CheckoutSessionSnapshot {
+  return {
+    id: session.id,
+    url: session.url,
+    status: session.status,
+    payment_status: session.payment_status,
+    amount_total: session.amount_total,
+  };
+}
+
 export function stripeCheckoutAdapter(stripe: Stripe): CheckoutStripe {
   return {
-    async retrieveSession(id) {
-      const session = await stripe.checkout.sessions.retrieve(id);
-      return {
-        id: session.id,
-        url: session.url,
-        status: session.status,
-        payment_status: session.payment_status,
-        amount_total: session.amount_total,
-      };
+    async retrieveSession(id, stripeAccount) {
+      try {
+        return mapSession(await stripe.checkout.sessions.retrieve(id, stripeAccountOptions(stripeAccount)));
+      } catch (err) {
+        if (!stripeAccount || classifyCheckoutRetrievalError(err) !== "missing") throw err;
+        return mapSession(await stripe.checkout.sessions.retrieve(id));
+      }
     },
-    async expireSession(id) {
-      await stripe.checkout.sessions.expire(id);
+    async expireSession(id, stripeAccount) {
+      try {
+        await stripe.checkout.sessions.expire(id, stripeAccountOptions(stripeAccount));
+      } catch (err) {
+        if (!stripeAccount || classifyCheckoutRetrievalError(err) !== "missing") throw err;
+        await stripe.checkout.sessions.expire(id);
+      }
     },
-    async createSession(params, idempotencyKey) {
-      const session = await stripe.checkout.sessions.create(params, { idempotencyKey });
+    async createSession(params, idempotencyKey, stripeAccount) {
+      const session = await stripe.checkout.sessions.create(params, {
+        idempotencyKey,
+        ...stripeAccountOptions(stripeAccount),
+      });
       return { id: session.id, url: session.url };
     },
   };
+}
+
+/** Connected account for a direct charge. Platform-only staging charges stay on the platform. */
+export function directChargeStripeAccount(input: {
+  platformCharge?: boolean;
+  connectAccountId: string | null;
+}): string | null {
+  if (input.platformCharge) return null;
+  return input.connectAccountId?.trim() || null;
 }
 
 const SESSION_UNKNOWN_ERROR =
@@ -173,12 +205,12 @@ export function paymentFeeSnapshot(input: {
   platformFeePence: number;
   applicationFeeAmount: number;
 } {
-  const mode = normalizeProcessingFeeMode(input.processingFeeMode);
+  // Player pays is removed until a professional has reviewed UK surcharge rules.
+  // A stored player_pays value does not add a line or change the charge.
+  const mode: ProcessingFeeMode = "society_absorbs";
   const platformCharge = input.platformCharge === true;
-  const estimated = mode === "society_absorbs" ? 0 : (input.estimatedProcessingFeePence ?? 0);
-  const intended = mode === "society_absorbs"
-    ? (input.intendedFeePence ?? input.amountPence)
-    : (input.intendedFeePence ?? input.amountPence - estimated);
+  const estimated = 0;
+  const intended = input.intendedFeePence ?? input.amountPence;
   const snapshotPlatformFee = platformCharge ? 0 : (input.platformFeePence ?? platformFeePence(intended));
   const snapshotBasisPoints = platformCharge ? 0 : (input.platformFeeBasisPoints ?? PLATFORM_FEE_BASIS_POINTS);
   return {
@@ -222,29 +254,15 @@ export function sessionParams(input: RunCheckoutInput, transactionId: string): S
           product_data: { name: `Event entry - ${input.eventName || "Golf event"}` },
         },
       },
-      ...(fee.mode === "player_pays" && fee.estimatedProcessingFeePence > 0
-        ? [
-            {
-              quantity: 1,
-              price_data: {
-                currency: "gbp" as const,
-                unit_amount: fee.estimatedProcessingFeePence,
-                product_data: { name: PLAYER_PROCESSING_FEE_LABEL },
-              },
-            },
-          ]
-        : []),
     ],
-    // A staging platform charge has no destination and no application fee.
-    // A Connect charge sets on_behalf_of so the society bears the Stripe fee
-    // and application_fee_amount is Golf Society Hub's platform fee.
+    // A staging platform charge has no Stripe-Account header and no application fee.
+    // A Connect charge is a direct charge: application_fee_amount only.
+    // The Stripe-Account header is passed separately. No transfer_data, no on_behalf_of.
     ...(platformCharge
       ? {}
       : {
           payment_intent_data: {
             ...(fee.applicationFeeAmount > 0 ? { application_fee_amount: fee.applicationFeeAmount } : {}),
-            on_behalf_of: input.connectAccountId ?? "",
-            transfer_data: { destination: input.connectAccountId ?? "" },
           },
         }),
     metadata,
@@ -295,9 +313,10 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
   if (plan.action === "reuse" || plan.action === "supersede") {
     let found: CheckoutSessionSnapshot | null = null;
     let usability: SessionUsability | "missing" | "none" = "none";
+    const stripeAccount = directChargeStripeAccount(input);
     if (plan.sessionId) {
       try {
-        found = await input.stripe.retrieveSession(plan.sessionId);
+        found = await input.stripe.retrieveSession(plan.sessionId, stripeAccount);
         usability = sessionUsability(found);
       } catch (err) {
         if (classifyCheckoutRetrievalError(err) === "missing") {
@@ -329,7 +348,7 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
       }
       if (usability === "open" && found) {
         try {
-          await input.stripe.expireSession(found.id);
+          await input.stripe.expireSession(found.id, stripeAccount);
         } catch (err) {
           console.error("[checkout] expire session:", (err as Error).message);
           return { status: 409, body: { error: "The previous checkout could not be replaced yet" } };
@@ -358,6 +377,7 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
   const session = await input.stripe.createSession(
     sessionParams(input, transactionId),
     stripeCheckoutIdempotencyKey(transactionId, replacedSessionId),
+    directChargeStripeAccount(input),
   );
   await input.store.saveSessionId(transactionId, session.id);
   if (!session.url) return { status: 500, body: { error: "Stripe session missing url" } };

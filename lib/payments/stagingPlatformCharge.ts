@@ -5,7 +5,7 @@
  * including unset, leaves Connect routing unchanged. When the flag is on it
  * still fails closed against production, a production Node environment, or a
  * Stripe key that is not sk_test_. A society whose Connect account can already
- * take charges keeps the existing destination charge.
+ * take charges uses a direct charge on that connected account.
  */
 
 const PRODUCTION_PROJECT_REF = "eaenzjwecrrbhibrvgsb";

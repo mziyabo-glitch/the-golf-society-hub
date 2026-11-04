@@ -514,7 +514,7 @@ export default function TreasurerScreen() {
                     Fee {feeView.intendedLabel} · {feeView.modeLabel}
                   </AppText>
                   <AppText variant="caption" color="muted">
-                    Gross {feeView.grossLabel} · Stripe processing fee {feeView.feeLabel} · Golf Society Hub platform fee {feeView.platformFeeLabel} · Society net {feeView.netLabel}
+                    Gross {feeView.grossLabel} · Stripe card fee {feeView.feeLabel} · Golf Society Hub platform fee {feeView.platformFeeLabel} · Society net {feeView.netLabel}
                   </AppText>
                   <AppText variant="caption" color="muted">
                     {feeView.varianceLabel ? `Variance ${feeView.varianceLabel} · ` : ""}
@@ -935,7 +935,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             <th>Fee</th>
             <th>Mode</th>
             <th>Gross</th>
-            <th>Stripe processing fee</th>
+            <th>Stripe card fee</th>
             <th>Golf Society Hub platform fee</th>
             <th>Society net</th>
             <th>Reconciliation</th>
