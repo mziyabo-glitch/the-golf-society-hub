@@ -7,11 +7,11 @@ import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { getColors, spacing, iconSize } from "@/lib/ui/theme";
 import {
-  formatPenceGbpShort,
   shouldShowOnlinePayNow,
   type SocietyPaymentConfig,
 } from "@/lib/payments/eventPricing";
 import { fetchStagingPlatformChargeEnabled, startMemberEventCheckout } from "@/lib/payments/eventPaymentCheckout";
+import { formatGbpFromPence, quoteCheckoutCharge } from "@/lib/payments/processingFee";
 
 type Props = {
   eventId: string;
@@ -59,6 +59,7 @@ export function MemberEventPaymentSection({
   });
 
   const bankCopy = bankTransferInstructions?.trim() || society?.event_bank_transfer_instructions?.trim();
+  const quote = amountPence != null && amountPence > 0 ? quoteCheckoutCharge(amountPence, society?.processing_fee_mode) : null;
 
   const onPayNow = async () => {
     setError(null);
@@ -87,10 +88,18 @@ export function MemberEventPaymentSection({
         <AppText variant="bodyBold" style={{ marginLeft: spacing.sm, flex: 1 }}>
           Event fee
         </AppText>
-        {amountPence != null && amountPence > 0 ? (
-          <AppText variant="bodyBold">{formatPenceGbpShort(amountPence)}</AppText>
-        ) : null}
+        {quote ? <AppText variant="bodyBold">{formatGbpFromPence(quote.intendedPence)}</AppText> : null}
       </View>
+      {quote?.mode === "player_pays" ? (
+        <View style={{ marginTop: spacing.xs }}>
+          <AppText variant="small" color="secondary">
+            Processing fee {formatGbpFromPence(quote.estimatedProcessingFeePence)}
+          </AppText>
+          <AppText variant="bodyBold" style={{ marginTop: 2 }}>
+            Total {formatGbpFromPence(quote.grossPence)}
+          </AppText>
+        </View>
+      ) : null}
 
       {showPayNow ? (
         <PrimaryButton onPress={() => void onPayNow()} disabled={busy} style={{ marginTop: spacing.sm }}>

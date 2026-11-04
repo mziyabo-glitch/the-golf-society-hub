@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import { getServiceRoleSupabase } from "@/lib/server/supabaseServiceRole";
+import { actualProcessingFeeFromBalance } from "@/lib/payments/processingFee";
 import { stagingPlatformChargePermitted } from "@/lib/payments/stagingPlatformCharge";
 import {
   paymentApplyFailureStatus,
@@ -32,6 +33,13 @@ export type StripeWebhookDeps = {
   loadBeneficiaryConnectAccount: (societyId: string) => Promise<string | null>;
   retrievePaymentIntent: (id: string) => Promise<PaymentIntentCheck | null>;
   applyPayment: (payment: ApplyPayment) => Promise<void>;
+  recordProcessingFee?: (fee: {
+    transactionId: string;
+    paymentIntentId: string;
+    feePence: number;
+    netPence: number;
+  }) => Promise<void>;
+  retrieveBalanceTransaction?: (id: string) => Promise<{ amount: number; fee: number; net: number; currency: string } | null>;
   syncConnectAccount: (account: {
     id: string;
     chargesEnabled: boolean;
@@ -64,6 +72,18 @@ function receiptUrl(intent: Stripe.PaymentIntent): string | null {
   const charge = intent.latest_charge;
   if (!charge || typeof charge === "string") return null;
   return charge.receipt_url ?? null;
+}
+
+function balanceFromCharge(charge: Stripe.Charge | string | null | undefined): PaymentIntentCheck["balanceTransaction"] {
+  if (!charge || typeof charge === "string") return null;
+  const balance = charge.balance_transaction;
+  if (!balance || typeof balance === "string") return null;
+  return {
+    amount: balance.amount,
+    fee: balance.fee,
+    net: balance.net,
+    currency: balance.currency,
+  };
 }
 
 function mapRefund(refund: Stripe.Refund): StripeRefundCheck {
@@ -103,7 +123,7 @@ function defaultDeps(): StripeWebhookDeps {
       return (data?.stripe_connect_account_id as string | null) ?? null;
     },
     async retrievePaymentIntent(id) {
-      const intent = await stripe.paymentIntents.retrieve(id, { expand: ["latest_charge"] });
+      const intent = await stripe.paymentIntents.retrieve(id, { expand: ["latest_charge.balance_transaction"] });
       return {
         id: intent.id,
         amount: intent.amount,
@@ -112,7 +132,21 @@ function defaultDeps(): StripeWebhookDeps {
         destinationAccountId: connectedDestinationAccountId(intent),
         applicationFeeAmount: intent.application_fee_amount,
         receiptUrl: receiptUrl(intent),
+        balanceTransaction: balanceFromCharge(intent.latest_charge),
       };
+    },
+    async retrieveBalanceTransaction(id) {
+      const balance = await stripe.balanceTransactions.retrieve(id);
+      return { amount: balance.amount, fee: balance.fee, net: balance.net, currency: balance.currency };
+    },
+    async recordProcessingFee(fee) {
+      const { error } = await admin.rpc("record_event_stripe_processing_fee", {
+        p_payment_transaction_id: fee.transactionId,
+        p_stripe_payment_intent: fee.paymentIntentId,
+        p_fee_pence: fee.feePence,
+        p_net_pence: fee.netPence,
+      });
+      if (error) throw new Error(error.message);
     },
     async applyPayment(payment) {
       const { error } = await admin.rpc("apply_event_stripe_payment", {
@@ -213,6 +247,34 @@ export async function handleStripeWebhook(
     return { status: 200, body: { received: true } };
   }
 
+  if (disposition === "balance") {
+    const charge = event.data.object as Stripe.Charge;
+    const paymentIntentId = typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id ?? "";
+    if (!paymentIntentId || !runtime.loadTransactionByPaymentIntent || !runtime.recordProcessingFee) {
+      return { status: 200, body: { received: true } };
+    }
+    try {
+      const transaction = await runtime.loadTransactionByPaymentIntent(paymentIntentId);
+      if (!transaction) return { status: 200, body: { received: true } };
+      let balance = balanceFromCharge(charge);
+      if (!balance && typeof charge.balance_transaction === "string" && runtime.retrieveBalanceTransaction) {
+        balance = await runtime.retrieveBalanceTransaction(charge.balance_transaction);
+      }
+      const actual = actualProcessingFeeFromBalance(balance, transaction.amount_pence);
+      if (!actual) return { status: 200, body: { received: true } };
+      await runtime.recordProcessingFee({
+        transactionId: transaction.id,
+        paymentIntentId,
+        feePence: actual.feePence,
+        netPence: actual.netPence,
+      });
+      return { status: 200, body: { received: true } };
+    } catch (err) {
+      console.error("[stripe webhook] processing fee:", (err as Error).message);
+      return { status: 500, body: { error: "Failed to record processing fee" } };
+    }
+  }
+
   if (disposition === "refund") {
     const hinted = event.data.object as { id?: string };
     if (!hinted.id || !runtime.retrieveRefund || !runtime.loadTransactionByPaymentIntent || !runtime.recordRefund) {
@@ -266,6 +328,15 @@ export async function handleStripeWebhook(
     });
     if (!verified.ok) return { status: verified.status, body: { error: verified.error } };
     await runtime.applyPayment(verified.payment);
+    const actualFee = actualProcessingFeeFromBalance(paymentIntent?.balanceTransaction, verified.payment.amountPence);
+    if (actualFee && runtime.recordProcessingFee) {
+      await runtime.recordProcessingFee({
+        transactionId: verified.payment.paymentTransactionId,
+        paymentIntentId: verified.payment.paymentIntentId,
+        feePence: actualFee.feePence,
+        netPence: actualFee.netPence,
+      });
+    }
     if (transaction?.payer_type === "guest" && transaction.guest_id && runtime.consumeGuestInvitation) {
       try {
         await runtime.consumeGuestInvitation(transaction.guest_id);

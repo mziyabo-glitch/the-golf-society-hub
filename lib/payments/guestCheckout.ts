@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import { getServiceRoleSupabase } from "@/lib/server/supabaseServiceRole";
 import { assertUuid, validateSocietyPaymentsReady } from "@/lib/payments/checkoutValidation";
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
+import { quoteCheckoutCharge } from "@/lib/payments/processingFee";
 import { resolveGuestCheckoutAmountPence } from "@/lib/payments/eventPricing";
 import {
   assertStripeTestMode,
@@ -59,6 +60,7 @@ type GuestCheckoutContext = {
     online_payments_enabled: boolean | null;
     stripe_connect_account_id: string | null;
     stripe_connect_charges_enabled: boolean | null;
+    processing_fee_mode?: string | null;
   } | null;
   rows: OpenPaymentRow[];
   keyed: OpenPaymentRow | null;
@@ -113,7 +115,7 @@ function buildDefaultGuestCheckoutDeps(stripeKey: string): GuestCheckoutDeps {
       const { data: society } = societyId
         ? await admin
             .from("societies")
-            .select("id, name, online_payments_enabled, stripe_connect_account_id, stripe_connect_charges_enabled")
+            .select("id, name, online_payments_enabled, stripe_connect_account_id, stripe_connect_charges_enabled, processing_fee_mode")
             .eq("id", societyId)
             .maybeSingle()
         : { data: null };
@@ -165,6 +167,7 @@ function buildDefaultGuestCheckoutDeps(stripeKey: string): GuestCheckoutDeps {
               online_payments_enabled: society.online_payments_enabled === true,
               stripe_connect_account_id: (society.stripe_connect_account_id as string | null) ?? null,
               stripe_connect_charges_enabled: society.stripe_connect_charges_enabled === true,
+              processing_fee_mode: (society.processing_fee_mode as string | null) ?? null,
             }
           : null,
         rows: (rows ?? []) as OpenPaymentRow[],
@@ -257,9 +260,13 @@ export async function handleCreateGuestCheckoutSession(
 
     const urls = buildCheckoutReturnUrls(body.eventId, serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL));
     const openRows = context.rows.filter((row) => row.status === "pending" || row.status === "succeeded" || row.status === "refund_pending");
+    const processingQuote = quoteCheckoutCharge(claim.amountPence, context.society.processing_fee_mode);
     const routed = routeStagingCheckout(
       {
-        amountPence: claim.amountPence,
+        amountPence: processingQuote.grossPence,
+        processingFeeMode: processingQuote.mode,
+        intendedFeePence: processingQuote.intendedPence,
+        estimatedProcessingFeePence: processingQuote.estimatedProcessingFeePence,
         idempotencyKey,
         payerType: "guest" as const,
         memberId: null,

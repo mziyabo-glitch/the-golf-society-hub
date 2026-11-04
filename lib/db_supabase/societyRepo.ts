@@ -26,6 +26,7 @@ export type SocietyDoc = {
   seats_used?: number;
   licence_expires_at?: string | null;
   online_payments_enabled?: boolean;
+  processing_fee_mode?: "society_absorbs" | "player_pays" | null;
   stripe_connect_account_id?: string | null;
   stripe_connect_charges_enabled?: boolean;
   event_bank_transfer_instructions?: string | null;
@@ -693,6 +694,7 @@ export async function updateSociety(
     scoring_mode: string | null;
     handicap_rule: string | null;
     annual_fee_pence: number | null;
+    processing_fee_mode: "society_absorbs" | "player_pays";
   }>
 ): Promise<void> {
   console.log("[societyRepo] updateSociety:", { societyId, updates });

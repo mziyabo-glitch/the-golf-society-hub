@@ -67,6 +67,7 @@ import {
   getRecentPaymentTransactionsForSociety,
   type PaymentTransactionRow,
 } from "@/lib/db_supabase/paymentTransactionRepo";
+import { processingFeeLedgerView } from "@/lib/payments/processingFee";
 
 type EntryWithBalance = FinanceEntryDoc & { runningBalancePence: number };
 
@@ -349,6 +350,7 @@ export default function TreasurerScreen() {
         totalIncomePence: summary.totalIncomePence,
         totalCostsPence: summary.totalCostsPence,
         currentBalancePence: summary.currentBalancePence,
+        onlinePayments,
       });
 
       const { uri } = await printHtmlToPdfFileAsync({ html, base64: false });
@@ -486,7 +488,9 @@ export default function TreasurerScreen() {
             <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
               Stripe Checkout (test mode) — reconcile against your bank / Connect payouts.
             </AppText>
-            {onlinePayments.slice(0, 8).map((tx) => (
+            {onlinePayments.slice(0, 8).map((tx) => {
+              const feeView = processingFeeLedgerView(tx);
+              return (
               <View
                 key={tx.id}
                 style={{
@@ -498,13 +502,24 @@ export default function TreasurerScreen() {
                 }}
               >
                 <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
-                  <AppText variant="captionBold" numberOfLines={1}>
+                  <AppText variant="captionBold">
                     {tx.payer_display_name || (tx.payer_type === "guest" ? "Guest" : "Member")} · {tx.status}
                     {tx.resolution_required ? " · needs resolution" : ""}
                   </AppText>
-                  <AppText variant="caption" color="muted" numberOfLines={2}>
+                  <AppText variant="caption" color="muted">
                     {tx.event_name ? `${tx.event_name} · ` : ""}
                     {new Date(tx.completed_at ?? tx.created_at).toLocaleDateString("en-GB")}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    Fee {feeView.intendedLabel} · {feeView.modeLabel}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    Gross {feeView.grossLabel} · Processing fee {feeView.feeLabel} · Net {feeView.netLabel}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    {feeView.varianceLabel ? `Variance ${feeView.varianceLabel} · ` : ""}
+                    {feeView.reconciliationLabel}
+                    {feeView.refundLabel ? ` · ${feeView.refundLabel}` : ""}
                   </AppText>
                   {tx.event_name?.includes("staging platform charge") ? (
                     <AppText variant="caption" color="muted">
@@ -517,9 +532,10 @@ export default function TreasurerScreen() {
                     </AppText>
                   ) : null}
                 </View>
-                <AppText variant="bodyBold">{formatPenceToGBP(tx.amount_pence)}</AppText>
+                <AppText variant="bodyBold">{feeView.grossLabel}</AppText>
               </View>
-            ))}
+              );
+            })}
           </AppCard>
         ) : null}
 
@@ -892,6 +908,7 @@ type LedgerPdfData = {
   totalIncomePence: number;
   totalCostsPence: number;
   currentBalancePence: number;
+  onlinePayments?: PaymentTransactionRow[];
 };
 
 function generateLedgerPdfHtml(data: LedgerPdfData): string {
@@ -903,7 +920,41 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
     totalIncomePence,
     totalCostsPence,
     currentBalancePence,
+    onlinePayments = [],
   } = data;
+
+  const onlineHtml = onlinePayments.length === 0
+    ? ""
+    : `<h2 style="margin: 24px 0 8px; font-size: 14px;">Online event payments</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Payer</th>
+            <th>Fee</th>
+            <th>Mode</th>
+            <th>Gross</th>
+            <th>Processing fee</th>
+            <th>Net</th>
+            <th>Reconciliation</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${onlinePayments.map((tx) => {
+            const view = processingFeeLedgerView(tx);
+            const variance = view.varianceLabel ? `Variance ${escapeHtml(view.varianceLabel)}` : "";
+            const refund = view.refundLabel ? escapeHtml(view.refundLabel) : "";
+            return `<tr>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(tx.payer_display_name || tx.payer_type)}<br/>${escapeHtml(tx.event_name || "")}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.intendedLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.modeLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.grossLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.feeLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.netLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.reconciliationLabel)}${variance ? `<br/>${variance}` : ""}${refund ? `<br/>${refund}` : ""}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`;
 
   const today = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
@@ -1057,6 +1108,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
               ${entriesHtml}
             </tbody>
           </table>
+          ${onlineHtml}
           <div class="footer">
             ${entries.length} transaction${entries.length !== 1 ? "s" : ""} recorded<br/>
             Produced by The Golf Society Hub

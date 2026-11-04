@@ -6,6 +6,7 @@ export type SocietyPaymentConfig = {
   stripe_connect_account_id?: string | null;
   stripe_connect_charges_enabled?: boolean | null;
   event_bank_transfer_instructions?: string | null;
+  processing_fee_mode?: "society_absorbs" | "player_pays" | null;
 };
 
 export type EventFeePence = {

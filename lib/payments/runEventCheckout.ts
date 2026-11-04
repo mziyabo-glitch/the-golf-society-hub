@@ -7,6 +7,10 @@ import {
 } from "@/lib/payments/checkoutAttempt";
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import {
+  normalizeProcessingFeeMode,
+  type ProcessingFeeMode,
+} from "@/lib/payments/processingFee";
+import {
   STAGING_PLATFORM_CHARGE_METADATA_KEY,
   STAGING_PLATFORM_CHARGE_METADATA_VALUE,
   STAGING_PLATFORM_CHARGE_ROUTE,
@@ -52,6 +56,9 @@ export type PendingPaymentInsert = {
   amountPence: number;
   idempotencyKey: string;
   stripeConnectAccountId: string | null;
+  processingFeeMode?: ProcessingFeeMode;
+  intendedFeePence?: number;
+  estimatedProcessingFeePence?: number;
 };
 
 export type CheckoutStore = {
@@ -75,6 +82,10 @@ export type RunCheckoutInput = {
   eventDateSnapshot: string | null;
   payerDisplayName: string;
   connectAccountId: string | null;
+  /** Snapshot of the payer society's processing-fee choice. */
+  processingFeeMode?: ProcessingFeeMode;
+  intendedFeePence?: number;
+  estimatedProcessingFeePence?: number;
   /** True only when the beneficiary Connect account can already take charges. */
   beneficiaryChargesEnabled?: boolean;
   /** Staging-only direct charge on the platform account. No Connect transfer. */
@@ -138,8 +149,34 @@ function sessionUsability(session: CheckoutSessionSnapshot): SessionUsability {
   return "unknown";
 }
 
+export function paymentFeeSnapshot(input: {
+  amountPence: number;
+  processingFeeMode?: ProcessingFeeMode;
+  intendedFeePence?: number;
+  estimatedProcessingFeePence?: number;
+}): { mode: ProcessingFeeMode; intendedPence: number; estimatedProcessingFeePence: number; grossPence: number } {
+  const mode = normalizeProcessingFeeMode(input.processingFeeMode);
+  if (mode === "society_absorbs") {
+    return {
+      mode,
+      intendedPence: input.amountPence,
+      estimatedProcessingFeePence: 0,
+      grossPence: input.amountPence,
+    };
+  }
+  const estimated = input.estimatedProcessingFeePence ?? 0;
+  const intended = input.intendedFeePence ?? input.amountPence - estimated;
+  return {
+    mode,
+    intendedPence: intended,
+    estimatedProcessingFeePence: estimated,
+    grossPence: input.amountPence,
+  };
+}
+
 export function sessionParams(input: RunCheckoutInput, transactionId: string): Stripe.Checkout.SessionCreateParams {
   const platformCharge = input.platformCharge === true;
+  const fee = paymentFeeSnapshot(input);
   const metadata: Stripe.MetadataParam = {
     payment_transaction_id: transactionId,
     event_id: input.eventId,
@@ -163,10 +200,22 @@ export function sessionParams(input: RunCheckoutInput, transactionId: string): S
         quantity: 1,
         price_data: {
           currency: "gbp",
-          unit_amount: input.amountPence,
+          unit_amount: fee.intendedPence,
           product_data: { name: `Event entry - ${input.eventName || "Golf event"}` },
         },
       },
+      ...(fee.mode === "player_pays" && fee.estimatedProcessingFeePence > 0
+        ? [
+            {
+              quantity: 1,
+              price_data: {
+                currency: "gbp" as const,
+                unit_amount: fee.estimatedProcessingFeePence,
+                product_data: { name: "Processing fee" },
+              },
+            },
+          ]
+        : []),
     ],
     // A staging platform charge must not set transfer_data, on_behalf_of, or application_fee_amount.
     ...(platformCharge
@@ -255,6 +304,9 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
         amountPence: input.amountPence,
         idempotencyKey: replacementLedgerIdempotencyKey(input.idempotencyKey, input.amountPence, plan.transactionId),
         stripeConnectAccountId: input.connectAccountId,
+        processingFeeMode: input.processingFeeMode,
+        intendedFeePence: input.intendedFeePence,
+        estimatedProcessingFeePence: input.estimatedProcessingFeePence,
       });
       replacedSessionId = null;
     } else if (usability === "unusable" || usability === "missing" || usability === "none") {
@@ -278,10 +330,13 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
       eventName: input.eventName,
       eventDateSnapshot: input.eventDateSnapshot,
       payerDisplayName: input.payerDisplayName,
-      amountPence: input.amountPence,
-      idempotencyKey: input.idempotencyKey,
-      stripeConnectAccountId: input.connectAccountId,
-    });
+        amountPence: input.amountPence,
+        idempotencyKey: input.idempotencyKey,
+        stripeConnectAccountId: input.connectAccountId,
+        processingFeeMode: input.processingFeeMode,
+        intendedFeePence: input.intendedFeePence,
+        estimatedProcessingFeePence: input.estimatedProcessingFeePence,
+      });
   }
 
   const session = await input.stripe.createSession(

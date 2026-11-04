@@ -38,6 +38,7 @@ export type PaymentIntentCheck = {
   destinationAccountId: string | null;
   applicationFeeAmount?: number | null;
   receiptUrl: string | null;
+  balanceTransaction?: { amount: number; fee: number; net: number; currency: string } | null;
 };
 
 export type VerifiedStripePayment = {
@@ -57,12 +58,13 @@ export type PaymentVerification =
   | { ok: true; payment: VerifiedStripePayment }
   | { ok: false; status: number; error: string; code: string };
 
-export function stripeEventDisposition(eventType: string): "apply" | "connect" | "refund" | "ignore" {
+export function stripeEventDisposition(eventType: string): "apply" | "connect" | "refund" | "balance" | "ignore" {
   if (eventType === "checkout.session.completed" || eventType === "checkout.session.async_payment_succeeded") {
     return "apply";
   }
   if (eventType === "account.updated") return "connect";
   if (eventType === "refund.created" || eventType === "refund.updated") return "refund";
+  if (eventType === "charge.updated") return "balance";
   return "ignore";
 }
 

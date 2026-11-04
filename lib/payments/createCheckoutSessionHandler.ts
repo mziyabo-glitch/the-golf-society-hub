@@ -17,6 +17,7 @@ import {
 } from "@/lib/payments/checkoutAttempt";
 import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
+import { quoteCheckoutCharge } from "@/lib/payments/processingFee";
 import { routeStagingCheckout, stagingPlatformChargeDecision } from "@/lib/payments/stagingPlatformCharge";
 import {
   CheckoutConflictError,
@@ -76,6 +77,9 @@ export function createPaymentCheckoutStore(admin: ReturnType<typeof getServiceRo
           payment_method: "stripe",
           idempotency_key: row.idempotencyKey,
           stripe_connect_account_id: row.stripeConnectAccountId,
+          processing_fee_mode: row.processingFeeMode ?? "society_absorbs",
+          intended_fee_pence: row.intendedFeePence ?? row.amountPence,
+          estimated_processing_fee_pence: row.estimatedProcessingFeePence ?? 0,
         })
         .select("id")
         .single();
@@ -139,7 +143,7 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
 
       const { data: society, error: socErr } = await admin
         .from("societies")
-        .select("id, name, online_payments_enabled, stripe_connect_account_id, stripe_connect_charges_enabled, event_bank_transfer_instructions")
+        .select("id, name, online_payments_enabled, stripe_connect_account_id, stripe_connect_charges_enabled, event_bank_transfer_instructions, processing_fee_mode")
         .eq("id", body.societyId)
         .maybeSingle();
       if (socErr || !society) return { ok: false, result: { status: 404, body: { error: "Society not found" } } };
@@ -220,6 +224,7 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
       if (amountPence == null || amountPence <= 0) {
         return { ok: false, result: { status: 400, body: { error: "Event fee is not configured for online payment" } } };
       }
+      const processingQuote = quoteCheckoutCharge(amountPence, society.processing_fee_mode as string | null);
 
       const { data: keyed } = await admin
         .from("payment_transactions")
@@ -242,7 +247,10 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
       return {
         ok: true,
         checkout: {
-          amountPence,
+          amountPence: processingQuote.grossPence,
+          processingFeeMode: processingQuote.mode,
+          intendedFeePence: processingQuote.intendedPence,
+          estimatedProcessingFeePence: processingQuote.estimatedProcessingFeePence,
           idempotencyKey,
           payerType: "member",
           memberId,

@@ -64,6 +64,7 @@ import {
 } from "@/lib/events/eventsListScreenModel";
 import { EventsSegmentTabs } from "@/features/events/components/EventsSegmentTabs";
 import { EventListRowCard } from "@/features/events/components/EventListRowCard";
+import { ProcessingFeeModeField } from "@/components/event-payments/ProcessingFeeModeField";
 
 // Simple picker option component
 const PickerOption = memo(function PickerOption({
@@ -859,6 +860,9 @@ export default function EventsScreen() {
               <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
                 Shown to members on the home screen and event page.
               </AppText>
+              {permissions.canManageMembershipFees ? (
+                <ProcessingFeeModeField societyId={societyId || activeSocietyId} />
+              ) : null}
             </View>
 
             {/* Joint Event: directly after Classification, before Course / Tee Setup */}

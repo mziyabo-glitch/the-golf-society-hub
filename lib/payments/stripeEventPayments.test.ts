@@ -19,11 +19,12 @@ import { paymentApplyFailureStatus, stripeEventDisposition, verifyPaidCheckout }
 import { handleStripeWebhook } from "@/lib/payments/stripeWebhookHandler";
 import { handleConnectOnboarding } from "@/lib/payments/connectOnboarding";
 import { omitStripeConnectOwnershipFields } from "@/lib/db_supabase/societyConnectFields";
-import { handleRefundEventPayment } from "@/lib/payments/refundEventPayment";
+import { handleRefundEventPayment, refundCreateParams } from "@/lib/payments/refundEventPayment";
 import { handleCreateEventCheckoutSession } from "@/lib/payments/createCheckoutSessionHandler";
 import { handleCreateGuestCheckoutSession } from "@/lib/payments/guestCheckout";
 import { planParticipantCheckout, stripeCheckoutIdempotencyKey } from "@/lib/payments/checkoutAttempt";
-import { CheckoutConflictError, classifyCheckoutRetrievalError, runEventCheckout, type CheckoutStore } from "@/lib/payments/runEventCheckout";
+import { CheckoutConflictError, classifyCheckoutRetrievalError, runEventCheckout, sessionParams, type CheckoutStore, type RunCheckoutInput } from "@/lib/payments/runEventCheckout";
+import { quoteCheckoutCharge } from "@/lib/payments/processingFee";
 import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import { assessGuestCheckoutClaim, hashGuestPaymentToken } from "@/lib/payments/guestPaymentToken";
@@ -121,6 +122,7 @@ describe("stripe payment foundation", () => {
       "supabase/migrations/20261104021500_staging_platform_charge_apply.sql",
       "supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql",
       "supabase/migrations/20261104160000_replace_society_own_connect_account.sql",
+      "supabase/migrations/20261104180000_processing_fee_mode.sql",
     ]) {
       const version = path.basename(file).slice(0, 14);
       const hour = Number(version.slice(8, 10));
@@ -156,6 +158,26 @@ describe("stripe payment foundation", () => {
     expect(replaceSql).not.toContain("stripe_connect_account_id IS NULL");
     expect(replaceSql).toContain("payment_mutation_from_end_user");
     expect(replaceSql).not.toContain("GRANT EXECUTE ON FUNCTION public.assign_society_stripe_connect_account");
+    const feeSql = readFileSync(
+      path.join(root, "supabase/migrations/20261104180000_processing_fee_mode.sql"),
+      "utf8",
+    );
+    expect(feeSql.includes("```")).toBe(false);
+    expect(feeSql).not.toMatch(/[\u2014\u2018\u2019\u201c\u201d\u00a0]/);
+    expect(feeSql).toContain("DEFAULT 'society_absorbs'");
+    expect(feeSql).toContain("record_event_stripe_processing_fee");
+    expect(feeSql).toContain("WHEN v_tx.processing_fee_mode = 'player_pays' THEN p_fee_pence - v_tx.estimated_processing_fee_pence");
+    expect(feeSql).toContain("Does not accept an estimate");
+    expect(feeSql).toContain("REVOKE ALL ON FUNCTION public.record_event_stripe_processing_fee");
+    expect(feeSql).not.toContain("GRANT EXECUTE ON FUNCTION public.record_event_stripe_processing_fee(uuid, text, integer, integer)\n  TO authenticated");
+    expect(feeSql).toContain("TO service_role");
+    expect("20261104180000" > "20261104160000").toBe(true);
+    const handlerSql = readFileSync(path.join(root, "lib/payments/createCheckoutSessionHandler.ts"), "utf8");
+    const guestSql = readFileSync(path.join(root, "lib/payments/guestCheckout.ts"), "utf8");
+    expect(handlerSql).toContain('.eq("id", body.societyId)');
+    expect(handlerSql).toContain("quoteCheckoutCharge(amountPence, society.processing_fee_mode");
+    expect(guestSql).toContain("quoteCheckoutCharge(claim.amountPence, context.society.processing_fee_mode)");
+    expect(handlerSql).not.toContain("hostSociety.processing_fee_mode");
   });
 
   it("keeps online pay now off unless Connect is ready and the player is playing and unpaid", () => {
@@ -1143,5 +1165,267 @@ describe("stripe payment foundation", () => {
     expect(duplicate.status).toBe(409);
     expect(unpaid.status).toBe(422);
     expect(stripeEventDisposition("checkout.session.expired")).toBe("ignore");
+  });
+
+  it("snapshots both processing-fee modes and records only a real balance transaction", async () => {
+    const checkoutBase = {
+      idempotencyKey: "client-key-1234",
+      payerType: "member" as const,
+      memberId,
+      guestId: null,
+      eventId,
+      societyId,
+      beneficiarySocietyId: societyId,
+      societyName: "M4",
+      beneficiarySocietyName: "M4",
+      eventName: "Spring",
+      eventDateSnapshot: null,
+      payerDisplayName: "Player",
+      connectAccountId: "acct_payer",
+      successUrl: "https://app.example/success",
+      cancelUrl: "https://app.example/cancel",
+      rows: [],
+      keyed: null,
+      stripe: {
+        retrieveSession: async () => {
+          throw new Error("unused");
+        },
+        expireSession: async () => undefined,
+        createSession: async () => ({ id: "cs", url: null }),
+      },
+      store: {
+        cancelPending: async () => undefined,
+        insertPending: async () => txId,
+        saveSessionId: async () => undefined,
+      },
+    } satisfies Omit<RunCheckoutInput, "amountPence">;
+
+    const absorb = sessionParams({ ...checkoutBase, amountPence: 2500 }, txId);
+    expect(absorb.line_items).toHaveLength(1);
+    expect(absorb.line_items?.[0]?.price_data?.unit_amount).toBe(2500);
+    expect(absorb.payment_intent_data?.transfer_data?.destination).toBe("acct_payer");
+
+    const playerQuote = quoteCheckoutCharge(2500, "player_pays");
+    const player = sessionParams({
+      ...checkoutBase,
+      amountPence: playerQuote.grossPence,
+      processingFeeMode: playerQuote.mode,
+      intendedFeePence: playerQuote.intendedPence,
+      estimatedProcessingFeePence: playerQuote.estimatedProcessingFeePence,
+    }, txId);
+    const playerLines = player.line_items ?? [];
+    expect(playerLines).toHaveLength(2);
+    expect(playerLines[0]?.price_data?.unit_amount).toBe(2500);
+    expect(playerLines[1]?.price_data?.product_data?.name).toBe("Processing fee");
+    expect(playerLines[1]?.price_data?.unit_amount).toBe(59);
+    expect((playerLines[0]?.price_data?.unit_amount ?? 0) + (playerLines[1]?.price_data?.unit_amount ?? 0)).toBe(2559);
+
+    const inserted: { amountPence: number; processingFeeMode?: string; intendedFeePence?: number; estimatedProcessingFeePence?: number; societyId: string; beneficiarySocietyId: string; connectAccountId: string | null }[] = [];
+    const created: { lineCount: number; total: number; destination?: string }[] = [];
+    const hostId = beneficiaryId;
+    const token = "cd".repeat(32);
+    const guestId = "00000000-0000-4000-8000-000000000081";
+    const guest = await handleCreateGuestCheckoutSession(
+      { idempotencyKey: "idem-1234", rawBody: { paymentToken: token, eventId, societyId, guestId, amountPence: 2500 } },
+      {
+        stripeKey: "sk_test_123",
+        markInvitationUsed: async () => undefined,
+        stripe: {
+          retrieveSession: async () => ({ id: "cs_guest_fee", url: "https://pay.guest", status: "open", payment_status: "unpaid", amount_total: 2559 }),
+          expireSession: async () => undefined,
+          createSession: async (params) => {
+            const lines = params.line_items ?? [];
+            created.push({
+              lineCount: lines.length,
+              total: lines.reduce((sum, line) => sum + (line.price_data?.unit_amount ?? 0), 0),
+              destination: params.payment_intent_data?.transfer_data?.destination,
+            });
+            return { id: "cs_guest_fee", url: "https://pay.guest" };
+          },
+        },
+        store: {
+          cancelPending: async () => undefined,
+          insertPending: async (row) => {
+            inserted.push({
+              amountPence: row.amountPence,
+              processingFeeMode: row.processingFeeMode,
+              intendedFeePence: row.intendedFeePence,
+              estimatedProcessingFeePence: row.estimatedProcessingFeePence,
+              societyId: row.societyId,
+              beneficiarySocietyId: row.beneficiarySocietyId,
+              connectAccountId: row.stripeConnectAccountId,
+            });
+            return txId;
+          },
+          saveSessionId: async () => undefined,
+        },
+        loadContext: async () => ({
+          invitation: { eventId, societyId, guestId, expiresAt: "2099-01-01T00:00:00.000Z", consumedAt: null },
+          guest: { id: guestId, event_id: eventId, society_id: societyId, paid: false, name: "Guest" },
+          event: { id: eventId, society_id: hostId, name: "Joint", date: "2026-05-01", guest_entry_fee_pence: 2500 },
+          society: {
+            id: societyId,
+            name: "Payer society",
+            online_payments_enabled: true,
+            stripe_connect_account_id: "acct_payer",
+            stripe_connect_charges_enabled: true,
+            processing_fee_mode: "player_pays",
+          },
+          rows: [],
+          keyed: null,
+        }),
+      },
+    );
+    expect(guest.status).toBe(200);
+    expect(inserted[0]).toEqual({
+      amountPence: 2559,
+      processingFeeMode: "player_pays",
+      intendedFeePence: 2500,
+      estimatedProcessingFeePence: 59,
+      societyId,
+      beneficiarySocietyId: societyId,
+      connectAccountId: "acct_payer",
+    });
+    expect(inserted[0]?.beneficiarySocietyId).not.toBe(hostId);
+    expect(created[0]).toEqual({ lineCount: 2, total: 2559, destination: "acct_payer" });
+
+    const jointFee = resolveMemberCheckoutAmountPence(
+      { member_entry_fee_pence: 9900, joint_participant_entry_fee_pence: 2500 },
+      { isJointParticipantSociety: true },
+    );
+    expect(quoteCheckoutCharge(jointFee, "society_absorbs").grossPence).toBe(2500);
+    expect(quoteCheckoutCharge(jointFee, "player_pays").grossPence).toBe(2559);
+
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_secret";
+    const paidEvent = {
+      id: "evt_fee",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_fee",
+          mode: "payment",
+          status: "complete",
+          payment_status: "paid",
+          currency: "gbp",
+          amount_total: 2559,
+          payment_intent: "pi_fee",
+          metadata: {
+            payment_transaction_id: txId,
+            event_id: eventId,
+            society_id: societyId,
+            beneficiary_society_id: societyId,
+            payer_type: "guest",
+            member_id: "",
+            guest_id: guestId,
+          },
+        },
+      },
+    };
+    const recorded: { feePence: number; netPence: number }[] = [];
+    const withoutBalance = await handleStripeWebhook(
+      { rawBody: "{}", signatureHeader: "t=1,v1=ok" },
+      {
+        constructEvent: () => paidEvent as never,
+        loadTransaction: async () => pendingTx({
+          amount_pence: 2559,
+          stripe_checkout_session_id: "cs_fee",
+          stripe_connect_account_id: "acct_payer",
+          payer_type: "guest",
+          guest_id: guestId,
+          member_id: null,
+        }),
+        loadBeneficiaryConnectAccount: async () => "acct_payer",
+        retrievePaymentIntent: async () => ({ ...intent, id: "pi_fee", amount: 2559, destinationAccountId: "acct_payer" }),
+        applyPayment: async () => undefined,
+        recordProcessingFee: async (fee) => {
+          recorded.push({ feePence: fee.feePence, netPence: fee.netPence });
+        },
+        syncConnectAccount: async () => undefined,
+      },
+    );
+    expect(withoutBalance.status).toBe(200);
+    expect(recorded).toEqual([]);
+
+    const withBalance = await handleStripeWebhook(
+      { rawBody: "{}", signatureHeader: "t=1,v1=ok" },
+      {
+        constructEvent: () => paidEvent as never,
+        loadTransaction: async () => pendingTx({
+          amount_pence: 2559,
+          stripe_checkout_session_id: "cs_fee",
+          stripe_connect_account_id: "acct_payer",
+          payer_type: "guest",
+          guest_id: guestId,
+          member_id: null,
+        }),
+        loadBeneficiaryConnectAccount: async () => "acct_payer",
+        retrievePaymentIntent: async () => ({
+          ...intent,
+          id: "pi_fee",
+          amount: 2559,
+          destinationAccountId: "acct_payer",
+          balanceTransaction: { amount: 2559, fee: 110, net: 2449, currency: "gbp" },
+        }),
+        applyPayment: async () => undefined,
+        recordProcessingFee: async (fee) => {
+          recorded.push({ feePence: fee.feePence, netPence: fee.netPence });
+        },
+        syncConnectAccount: async () => undefined,
+      },
+    );
+    expect(withBalance.status).toBe(200);
+    expect(recorded).toEqual([{ feePence: 110, netPence: 2449 }]);
+
+    const lateFee = await handleStripeWebhook(
+      { rawBody: "{}", signatureHeader: "t=1,v1=ok" },
+      {
+        constructEvent: () => ({
+          id: "evt_charge",
+          type: "charge.updated",
+          data: { object: { id: "ch_fee", payment_intent: "pi_fee", balance_transaction: "txn_fee" } },
+        }) as never,
+        loadTransaction: async () => null,
+        loadBeneficiaryConnectAccount: async () => null,
+        retrievePaymentIntent: async () => null,
+        applyPayment: async () => undefined,
+        syncConnectAccount: async () => undefined,
+        loadTransactionByPaymentIntent: async () => pendingTx({
+          status: "succeeded",
+          amount_pence: 2500,
+          stripe_payment_intent_id: "pi_fee",
+        }),
+        retrieveBalanceTransaction: async () => ({ amount: 2500, fee: 99, net: 2401, currency: "gbp" }),
+        recordProcessingFee: async (fee) => {
+          recorded.push({ feePence: fee.feePence, netPence: fee.netPence });
+        },
+      },
+    );
+    expect(lateFee.status).toBe(200);
+    expect(recorded.at(-1)).toEqual({ feePence: 99, netPence: 2401 });
+    expect(stripeEventDisposition("charge.updated")).toBe("balance");
+
+    const estimateOnly = await handleStripeWebhook(
+      { rawBody: "{}", signatureHeader: "t=1,v1=ok" },
+      {
+        constructEvent: () => ({
+          id: "evt_charge_bare",
+          type: "charge.updated",
+          data: { object: { id: "ch_bare", payment_intent: "pi_fee", balance_transaction: "txn_missing" } },
+        }) as never,
+        loadTransaction: async () => null,
+        loadBeneficiaryConnectAccount: async () => null,
+        retrievePaymentIntent: async () => null,
+        applyPayment: async () => undefined,
+        syncConnectAccount: async () => undefined,
+        loadTransactionByPaymentIntent: async () => pendingTx({ status: "succeeded", amount_pence: 2559, stripe_payment_intent_id: "pi_fee" }),
+        retrieveBalanceTransaction: async () => null,
+        recordProcessingFee: async () => {
+          recorded.push({ feePence: 59, netPence: 2500 });
+        },
+      },
+    );
+    expect(estimateOnly.status).toBe(200);
+    expect(recorded).toHaveLength(2);
+    expect(refundCreateParams("pi_fee", "acct_payer").reverse_transfer).toBe(true);
   });
 });

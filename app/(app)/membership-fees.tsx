@@ -33,6 +33,7 @@ import {
   type FeeSummary,
 } from "@/lib/db_supabase/memberRepo";
 import { updateSociety, getSociety } from "@/lib/db_supabase/societyRepo";
+import { ProcessingFeeModeField } from "@/components/event-payments/ProcessingFeeModeField";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, iconSize, spacing, radius } from "@/lib/ui/theme";
 
@@ -295,6 +296,7 @@ export default function MembershipFeesScreen() {
           <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
             Set the annual membership fee. Leave blank or 0 for no fee.
           </AppText>
+          {canManageFees ? <ProcessingFeeModeField societyId={societyId} /> : null}
         </AppCard>
 
         {/* Members List */}
