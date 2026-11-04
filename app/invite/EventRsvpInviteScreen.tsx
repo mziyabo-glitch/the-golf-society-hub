@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Linking, Platform, StyleSheet, View } from "react-native";
 import { ReliablePressable } from "@/components/ui/ReliablePressable";
 import { useRouter } from "expo-router";
 
@@ -24,6 +24,8 @@ import {
   submitPublicGuestRsvp,
   type PublicEventInviteSummary,
 } from "@/lib/db_supabase/eventInviteRepo";
+import { formatPenceGbpShort } from "@/lib/payments/eventPricing";
+import { startGuestInvitationCheckout } from "@/lib/payments/eventPaymentCheckout";
 import { setMyStatus } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
   formatRsvpDeadlineDisplay,
@@ -47,6 +49,13 @@ import {
 
 type Step = "pick" | "member" | "guest" | "done";
 type DonePath = "member" | "guest" | null;
+type GuestPayOffer = {
+  paymentToken: string;
+  eventId: string;
+  societyId: string;
+  guestId: string;
+  amountPence: number;
+};
 type MemberGateKind = "unlinked" | "needs_auth" | "ambiguous";
 
 export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
@@ -68,6 +77,9 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
   const [memberCtx, setMemberCtx] = useState<{ memberId: string; societyId: string } | null>(null);
   const [ctxResolved, setCtxResolved] = useState(false);
   const [donePath, setDonePath] = useState<DonePath>(null);
+  const [guestPay, setGuestPay] = useState<GuestPayOffer | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -299,7 +311,25 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
     if (!assertRsvpOpen()) return;
     setBusy(true);
     try {
-      await submitPublicGuestRsvp(summary.event_id, name);
+      const invited = await submitPublicGuestRsvp(summary.event_id, name);
+      if (
+        invited.paymentToken &&
+        invited.guestId &&
+        invited.societyId &&
+        invited.amountPence != null &&
+        invited.amountPence > 0
+      ) {
+        setGuestPay({
+          paymentToken: invited.paymentToken,
+          eventId: summary.event_id,
+          societyId: invited.societyId,
+          guestId: invited.guestId,
+          amountPence: invited.amountPence,
+        });
+      } else {
+        setGuestPay(null);
+      }
+      setPayError(null);
       setDonePath("guest");
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[rsvp-qa] public submit ok", { kind: "guest", eventId: summary.event_id });
@@ -309,6 +339,24 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
       setFormError(mapSubmitError(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onGuestPay = async () => {
+    if (!guestPay) return;
+    setPayError(null);
+    setPayBusy(true);
+    try {
+      const { url } = await startGuestInvitationCheckout(guestPay);
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.location.href = url;
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch (e: unknown) {
+      setPayError((e as Error).message || "Payment could not be started");
+    } finally {
+      setPayBusy(false);
     }
   };
 
@@ -356,9 +404,28 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
             {summary.course_name ? ` · ${summary.course_name}` : ""}
           </AppText>
           {guestSuccess ? (
-            <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
-              You&apos;re on the guest list. The organiser will see you in the app.
-            </AppText>
+            <>
+              <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
+                You&apos;re on the guest list. The organiser will see you in the app.
+              </AppText>
+              {guestPay ? (
+                <>
+                  <AppText variant="body" style={{ marginTop: spacing.base }}>
+                    Entry fee {formatPenceGbpShort(guestPay.amountPence)}. Pay now to confirm your place.
+                  </AppText>
+                  <PrimaryButton
+                    onPress={() => void onGuestPay()}
+                    loading={payBusy}
+                    style={{ marginTop: spacing.base }}
+                  >
+                    Pay now
+                  </PrimaryButton>
+                  {payError ? (
+                    <InlineNotice variant="error" message={payError} style={{ marginTop: spacing.sm }} />
+                  ) : null}
+                </>
+              ) : null}
+            </>
           ) : (
             <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
               Your RSVP is saved for this event.

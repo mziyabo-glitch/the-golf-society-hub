@@ -93,6 +93,12 @@ export type EventDoc = {
   teeSource?: "imported" | "manual" | null;
   /** Optional label e.g. £45 or £55 incl. food */
   entryFeeDisplay?: string | null;
+  member_entry_fee_pence?: number | null;
+  memberEntryFeePence?: number | null;
+  guest_entry_fee_pence?: number | null;
+  guestEntryFeePence?: number | null;
+  joint_participant_entry_fee_pence?: number | null;
+  jointParticipantEntryFeePence?: number | null;
   /** When set, public invite link stops accepting new RSVPs after this instant (timestamptz). */
   rsvp_deadline_at?: string | null;
   rsvpDeadlineAt?: string | null;
@@ -167,6 +173,12 @@ function mapEvent(row: any): EventDoc {
     tee_id: row.tee_id ?? null,
     teeSource: row.tee_source ?? null,
     entryFeeDisplay: row.entry_fee_display?.trim() || null,
+    member_entry_fee_pence: row.member_entry_fee_pence ?? null,
+    memberEntryFeePence: row.member_entry_fee_pence ?? null,
+    guest_entry_fee_pence: row.guest_entry_fee_pence ?? null,
+    guestEntryFeePence: row.guest_entry_fee_pence ?? null,
+    joint_participant_entry_fee_pence: row.joint_participant_entry_fee_pence ?? null,
+    jointParticipantEntryFeePence: row.joint_participant_entry_fee_pence ?? null,
     rsvp_deadline_at: row.rsvp_deadline_at ?? null,
     rsvpDeadlineAt: row.rsvp_deadline_at ?? null,
     prize_pool_enabled: row.prize_pool_enabled ?? false,

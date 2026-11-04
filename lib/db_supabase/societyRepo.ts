@@ -2,6 +2,7 @@
 import { supabase } from "@/lib/supabase";
 import { SOCIETY_LOGO_BUCKET, clearSocietyLogoCache } from "@/lib/societyLogo";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { omitStripeConnectOwnershipFields } from "@/lib/db_supabase/societyConnectFields";
 
 export type SocietyDoc = {
   id: string;
@@ -24,6 +25,11 @@ export type SocietyDoc = {
   seats_total?: number;
   seats_used?: number;
   licence_expires_at?: string | null;
+  online_payments_enabled?: boolean;
+  processing_fee_mode?: "society_absorbs" | "player_pays" | null;
+  stripe_connect_account_id?: string | null;
+  stripe_connect_charges_enabled?: boolean;
+  event_bank_transfer_instructions?: string | null;
 };
 
 type SocietyInput = {
@@ -154,9 +160,11 @@ export async function updateSocietyDoc(
   id: string,
   updates: Partial<SocietyDoc>
 ): Promise<void> {
+  const payload = omitStripeConnectOwnershipFields(updates as Record<string, unknown>);
+  if (Object.keys(payload).length === 0) return;
   const { error } = await supabase
     .from("societies")
-    .update(updates)
+    .update(payload)
     .eq("id", id);
 
   if (error) {
@@ -686,6 +694,7 @@ export async function updateSociety(
     scoring_mode: string | null;
     handicap_rule: string | null;
     annual_fee_pence: number | null;
+    processing_fee_mode: "society_absorbs" | "player_pays";
   }>
 ): Promise<void> {
   console.log("[societyRepo] updateSociety:", { societyId, updates });

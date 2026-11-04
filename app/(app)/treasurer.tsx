@@ -63,6 +63,11 @@ import {
   type FinanceEntryType,
   type FinanceSummary,
 } from "@/lib/db_supabase/financeRepo";
+import {
+  getRecentPaymentTransactionsForSociety,
+  type PaymentTransactionRow,
+} from "@/lib/db_supabase/paymentTransactionRepo";
+import { processingFeeLedgerView } from "@/lib/payments/processingFee";
 
 type EntryWithBalance = FinanceEntryDoc & { runningBalancePence: number };
 
@@ -103,6 +108,7 @@ export default function TreasurerScreen() {
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [entriesWithBalance, setEntriesWithBalance] = useState<EntryWithBalance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [onlinePayments, setOnlinePayments] = useState<PaymentTransactionRow[]>([]);
 
   // Modal state
   const [showOpeningBalanceModal, setShowOpeningBalanceModal] = useState(false);
@@ -142,6 +148,8 @@ export default function TreasurerScreen() {
 
       const withBalances = calculateRunningBalances(data.entries, openingBalance);
       setEntriesWithBalance(withBalances);
+      const txRows = await getRecentPaymentTransactionsForSociety(societyId, 25);
+      setOnlinePayments(txRows);
     } catch (err: any) {
       console.error("[Treasurer] loadData error:", err);
       Alert.alert("Error", err?.message || "Failed to load data.");
@@ -342,6 +350,7 @@ export default function TreasurerScreen() {
         totalIncomePence: summary.totalIncomePence,
         totalCostsPence: summary.totalCostsPence,
         currentBalancePence: summary.currentBalancePence,
+        onlinePayments,
       });
 
       const { uri } = await printHtmlToPdfFileAsync({ html, base64: false });
@@ -470,6 +479,67 @@ export default function TreasurerScreen() {
             valueColor={balanceVariant === "success" ? "success" : balanceVariant === "error" ? "danger" : "muted"}
           />
         </View>
+
+        {onlinePayments.length > 0 ? (
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
+              Online event payments
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              Stripe Checkout (test mode) — reconcile against your bank / Connect payouts.
+            </AppText>
+            {onlinePayments.slice(0, 8).map((tx) => {
+              const feeView = processingFeeLedgerView(tx);
+              return (
+              <View
+                key={tx.id}
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  paddingVertical: spacing.xs,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.borderLight,
+                }}
+              >
+                <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
+                  <AppText variant="captionBold">
+                    {tx.payer_display_name || (tx.payer_type === "guest" ? "Guest" : "Member")} · {tx.status}
+                    {tx.resolution_required ? " · needs resolution" : ""}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    {tx.event_name ? `${tx.event_name} · ` : ""}
+                    {new Date(tx.completed_at ?? tx.created_at).toLocaleDateString("en-GB")}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    Fee {feeView.intendedLabel} · {feeView.modeLabel}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    Gross {feeView.grossLabel} · Stripe card fee {feeView.feeLabel} · Golf Society Hub platform fee {feeView.platformFeeLabel} · Society net {feeView.netLabel}
+                  </AppText>
+                  <AppText variant="caption" color="muted">
+                    {feeView.varianceLabel ? `Variance ${feeView.varianceLabel} · ` : ""}
+                    {feeView.reconciliationLabel}
+                    {feeView.cardFeeLabel ? ` · ${feeView.cardFeeLabel}` : ""}
+                    {feeView.refundLabel ? ` · ${feeView.refundLabel}` : ""}
+                    {feeView.platformFeeRefundLabel ? ` · ${feeView.platformFeeRefundLabel}` : ""}
+                  </AppText>
+                  {tx.event_name?.includes("staging platform charge") ? (
+                    <AppText variant="caption" color="muted">
+                      Staging platform charge, not a Connect allocation
+                    </AppText>
+                  ) : null}
+                  {tx.stripe_receipt_url ? (
+                    <AppText variant="caption" color="muted" numberOfLines={1}>
+                      {tx.stripe_receipt_url}
+                    </AppText>
+                  ) : null}
+                </View>
+                <AppText variant="bodyBold">{feeView.grossLabel}</AppText>
+              </View>
+              );
+            })}
+          </AppCard>
+        ) : null}
 
         {/* Add Entry Button */}
         <View style={styles.sectionHeader}>
@@ -840,6 +910,7 @@ type LedgerPdfData = {
   totalIncomePence: number;
   totalCostsPence: number;
   currentBalancePence: number;
+  onlinePayments?: PaymentTransactionRow[];
 };
 
 function generateLedgerPdfHtml(data: LedgerPdfData): string {
@@ -851,7 +922,45 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
     totalIncomePence,
     totalCostsPence,
     currentBalancePence,
+    onlinePayments = [],
   } = data;
+
+  const onlineHtml = onlinePayments.length === 0
+    ? ""
+    : `<h2 style="margin: 24px 0 8px; font-size: 14px;">Online event payments</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Payer</th>
+            <th>Fee</th>
+            <th>Mode</th>
+            <th>Gross</th>
+            <th>Stripe card fee</th>
+            <th>Golf Society Hub platform fee</th>
+            <th>Society net</th>
+            <th>Reconciliation</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${onlinePayments.map((tx) => {
+            const view = processingFeeLedgerView(tx);
+            const variance = view.varianceLabel ? `Variance ${escapeHtml(view.varianceLabel)}` : "";
+            const refund = view.refundLabel ? escapeHtml(view.refundLabel) : "";
+            const platformRefund = view.platformFeeRefundLabel ? escapeHtml(view.platformFeeRefundLabel) : "";
+            const cardFee = view.cardFeeLabel ? escapeHtml(view.cardFeeLabel) : "";
+            return `<tr>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(tx.payer_display_name || tx.payer_type)}<br/>${escapeHtml(tx.event_name || "")}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.intendedLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.modeLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.grossLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.feeLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.platformFeeLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.netLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.reconciliationLabel)}${variance ? `<br/>${variance}` : ""}${cardFee ? `<br/>${cardFee}` : ""}${refund ? `<br/>${refund}` : ""}${platformRefund ? `<br/>${platformRefund}` : ""}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`;
 
   const today = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
@@ -1005,6 +1114,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
               ${entriesHtml}
             </tbody>
           </table>
+          ${onlineHtml}
           <div class="footer">
             ${entries.length} transaction${entries.length !== 1 ? "s" : ""} recorded<br/>
             Produced by The Golf Society Hub

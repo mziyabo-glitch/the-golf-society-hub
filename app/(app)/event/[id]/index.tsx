@@ -53,9 +53,13 @@ import {
   shouldShowSocietyAttendanceSummary,
   splitQuickActionsForAudience,
   quickActionCopy,
+  memberPayNowPlaying,
   type EventDetailQuickActionId,
 } from "@/lib/events/eventDetailScreenModel";
+import { fetchMemberEventEntryStatus } from "@/lib/events/memberEventEntryStatus";
 import { resolveHomePlayingStatus } from "@/lib/home/homeNextEventPanelModel";
+import { resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
+import { MemberEventPaymentSection } from "@/components/event-payments/MemberEventPaymentSection";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -315,6 +319,21 @@ export default function EventOverviewScreen() {
     () => getMemberRegistration(registrations, effectiveMemberId),
     [registrations, effectiveMemberId],
   );
+  const [eventEntryStatus, setEventEntryStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!event?.id || !effectiveMemberId) {
+      setEventEntryStatus(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchMemberEventEntryStatus(event.id, effectiveMemberId).then((status) => {
+      if (!cancelled) setEventEntryStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, effectiveMemberId]);
 
   const toggleEventRsvp = useCallback(
     async (newStatus: "in" | "out") => {
@@ -546,6 +565,13 @@ export default function EventOverviewScreen() {
   );
   const showAdminTools = canManageEvent;
   const entryFeeDisplay = event?.entryFeeDisplay ?? (event as { entry_fee_display?: string })?.entry_fee_display;
+  const memberCheckoutPence = useMemo(() => {
+    if (!event || !societyId) return null;
+    const hostId = event.society_id ?? (event as { societyId?: string }).societyId;
+    return resolveMemberCheckoutAmountPence(event, {
+      isJointParticipantSociety: Boolean(hostId && societyId !== hostId),
+    });
+  }, [event, societyId]);
 
   const quickActionsPlan = useMemo(
     () =>
@@ -747,7 +773,7 @@ export default function EventOverviewScreen() {
           </AppText>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.sm }}>
             <StatusBadge label={myPlayingStatus.label} tone={myPlayingStatus.tone === "success" ? "success" : myPlayingStatus.tone === "neutral" ? "neutral" : "warning"} />
-            {shouldShowMemberPaymentStatus(myRegistration, entryFeeDisplay) ? (
+            {shouldShowMemberPaymentStatus(myRegistration, entryFeeDisplay, memberCheckoutPence) ? (
               <StatusBadge
                 label={myRegistration?.paid ? "Paid" : "Fee outstanding"}
                 tone={myRegistration?.paid ? "success" : "warning"}
@@ -815,6 +841,31 @@ export default function EventOverviewScreen() {
               </View>
               {rsvpError ? (
                 <InlineNotice variant="error" message={rsvpError} style={{ marginTop: spacing.sm }} />
+              ) : null}
+              {societyId && event?.id ? (
+                <MemberEventPaymentSection
+                  eventId={event.id}
+                  societyId={societyId}
+                  society={society as never}
+                  amountPence={memberCheckoutPence}
+                  playing={
+                    effectiveMemberId
+                      ? memberPayNowPlaying({
+                          memberId: effectiveMemberId,
+                          registration: myRegistration
+                            ? {
+                                status: myRegistration.status,
+                                removed_from_event_at: myRegistration.removed_from_event_at ?? null,
+                              }
+                            : null,
+                          playerIds: event?.playerIds,
+                          eventEntryStatus,
+                          rsvpDeadlineAt: event?.rsvpDeadlineAt ?? event?.rsvp_deadline_at ?? null,
+                        })
+                      : false
+                  }
+                  paid={myRegistration?.paid === true}
+                />
               ) : null}
             </>
           ) : null}

@@ -64,7 +64,6 @@ import {
 } from "@/lib/events/eventsListScreenModel";
 import { EventsSegmentTabs } from "@/features/events/components/EventsSegmentTabs";
 import { EventListRowCard } from "@/features/events/components/EventListRowCard";
-
 // Simple picker option component
 const PickerOption = memo(function PickerOption({
   label,
