@@ -46,6 +46,13 @@ export type PaymentIntentCheck = {
     currency: string;
     feeDetails?: { type?: string | null; amount?: number | null }[] | null;
   } | null;
+  destinationBalanceTransaction?: {
+    amount: number;
+    fee: number;
+    net: number;
+    currency: string;
+    feeDetails?: { type?: string | null; amount?: number | null }[] | null;
+  } | null;
 };
 
 export type VerifiedStripePayment = {

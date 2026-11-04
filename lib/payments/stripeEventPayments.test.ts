@@ -125,6 +125,7 @@ describe("stripe payment foundation", () => {
       "supabase/migrations/20261104180000_processing_fee_mode.sql",
       "supabase/migrations/20261104190000_processing_fee_mode_update.sql",
       "supabase/migrations/20261104200000_platform_fee.sql",
+      "supabase/migrations/20261104210000_platform_fee_society_net.sql",
     ]) {
       const version = path.basename(file).slice(0, 14);
       const hour = Number(version.slice(8, 10));
@@ -199,6 +200,15 @@ describe("stripe payment foundation", () => {
     expect(platformFeeSql).toContain("TO service_role");
     expect(platformFeeSql).not.toContain("eaenzjwecrrbhibrvgsb");
     expect("20261104200000" > "20261104190000").toBe(true);
+    const societyNetSql = readFileSync(
+      path.join(root, "supabase/migrations/20261104210000_platform_fee_society_net.sql"),
+      "utf8",
+    );
+    expect(societyNetSql).not.toMatch(/[\u2014\u2018\u2019\u201c\u201d\u00a0]/);
+    expect(societyNetSql).toContain("p_application_fee_pence + p_net_pence IS DISTINCT FROM v_tx.amount_pence");
+    expect(societyNetSql).toContain("Does not accept an estimate");
+    expect(societyNetSql).not.toContain("TO authenticated");
+    expect("20261104210000" > "20261104200000").toBe(true);
     const handlerSql = readFileSync(path.join(root, "lib/payments/createCheckoutSessionHandler.ts"), "utf8");
     const guestSql = readFileSync(path.join(root, "lib/payments/guestCheckout.ts"), "utf8");
     expect(handlerSql).toContain('.eq("id", body.societyId)');

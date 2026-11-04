@@ -149,7 +149,8 @@ function defaultDeps(): StripeWebhookDeps {
         expand: ["latest_charge.balance_transaction", "latest_charge.transfer"],
       });
       const charge = intent.latest_charge && typeof intent.latest_charge !== "string" ? intent.latest_charge : null;
-      let balance = balanceFromCharge(charge);
+      const balance = balanceFromCharge(charge);
+      let destinationBalance: PaymentIntentCheck["destinationBalanceTransaction"] = null;
       const transferId = !charge?.transfer
         ? ""
         : typeof charge.transfer === "string"
@@ -162,8 +163,8 @@ function defaultDeps(): StripeWebhookDeps {
           });
           const destinationPayment = transfer.destination_payment;
           const destinationCharge = destinationPayment && typeof destinationPayment !== "string" ? destinationPayment : null;
-          const destinationBalance = balanceFromCharge(destinationCharge);
-          if (destinationBalance && destinationBalance.amount === intent.amount) balance = destinationBalance;
+          const destination = balanceFromCharge(destinationCharge);
+          if (destination && destination.amount === intent.amount) destinationBalance = destination;
         } catch (err) {
           console.error("[stripe webhook] destination balance:", (err as Error).message);
         }
@@ -177,6 +178,7 @@ function defaultDeps(): StripeWebhookDeps {
         applicationFeeAmount: intent.application_fee_amount ?? charge?.application_fee_amount ?? null,
         receiptUrl: receiptUrl(intent),
         balanceTransaction: balance,
+        destinationBalanceTransaction: destinationBalance,
       };
     },
     async retrieveBalanceTransaction(id) {
@@ -328,6 +330,7 @@ export async function handleStripeWebhook(
         const intent = await runtime.retrievePaymentIntent(paymentIntentId);
         fees = actualFeesFromStripe({
           balance: intent?.balanceTransaction,
+          destinationBalance: intent?.destinationBalanceTransaction,
           grossPence: transaction.amount_pence,
           applicationFeeAmount: intent?.applicationFeeAmount ?? applicationFeeAmount,
         });
@@ -409,6 +412,7 @@ export async function handleStripeWebhook(
     await runtime.applyPayment(verified.payment);
     const fees = actualFeesFromStripe({
       balance: paymentIntent?.balanceTransaction,
+      destinationBalance: paymentIntent?.destinationBalanceTransaction,
       grossPence: verified.payment.amountPence,
       applicationFeeAmount: paymentIntent?.applicationFeeAmount,
     });

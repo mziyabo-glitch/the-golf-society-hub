@@ -200,7 +200,25 @@ describe("processing fee quote", () => {
         currency: "gbp",
         feeDetails: [{ type: "stripe_fee", amount: 99 }],
       },
-    })).toEqual({ stripeFeePence: 99, applicationFeePence: 50, societyNetPence: 2351 });
+    })).toBeNull();
+    expect(actualFeesFromStripe({
+      grossPence: 2500,
+      applicationFeeAmount: 50,
+      balance: {
+        amount: 2500,
+        fee: 99,
+        net: 2401,
+        currency: "gbp",
+        feeDetails: [{ type: "stripe_fee", amount: 99 }],
+      },
+      destinationBalance: {
+        amount: 2500,
+        fee: 50,
+        net: 2450,
+        currency: "gbp",
+        feeDetails: [{ type: "application_fee", amount: 50 }],
+      },
+    })).toEqual({ stripeFeePence: 99, applicationFeePence: 50, societyNetPence: 2450 });
 
     expect(actualFeesFromStripe({
       grossPence: 2500,
@@ -238,7 +256,18 @@ describe("processing fee quote", () => {
     expect(view.platformFeeLabel).toBe("£0.50");
     expect(view.netLabel).toBe("£23.51");
     expect(view.reconciliationLabel).toBe("reconciled");
+    expect(view.cardFeeLabel).toBeNull();
     expect(view.platformFeeRefundLabel).toBe("Platform fee refunded £0.50");
+    const platformCardFee = processingFeeLedgerView({
+      amount_pence: 2500,
+      stripe_processing_fee_pence: 99,
+      stripe_application_fee_pence: 50,
+      stripe_net_pence: 2450,
+      status: "succeeded",
+    });
+    expect(platformCardFee.netLabel).toBe("£24.50");
+    expect(platformCardFee.reconciliationLabel).toBe("reconciled");
+    expect(platformCardFee.cardFeeLabel).toBe("Stripe card fee is on the platform balance");
     expect(view.refundLabel).toBe("Refunded £25.00 charged");
     expect(processingFeeVariancePence("player_pays", 110, 101, 50)).toBe(41);
   });

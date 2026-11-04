@@ -519,6 +519,7 @@ export default function TreasurerScreen() {
                   <AppText variant="caption" color="muted">
                     {feeView.varianceLabel ? `Variance ${feeView.varianceLabel} · ` : ""}
                     {feeView.reconciliationLabel}
+                    {feeView.cardFeeLabel ? ` · ${feeView.cardFeeLabel}` : ""}
                     {feeView.refundLabel ? ` · ${feeView.refundLabel}` : ""}
                     {feeView.platformFeeRefundLabel ? ` · ${feeView.platformFeeRefundLabel}` : ""}
                   </AppText>
@@ -946,6 +947,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             const variance = view.varianceLabel ? `Variance ${escapeHtml(view.varianceLabel)}` : "";
             const refund = view.refundLabel ? escapeHtml(view.refundLabel) : "";
             const platformRefund = view.platformFeeRefundLabel ? escapeHtml(view.platformFeeRefundLabel) : "";
+            const cardFee = view.cardFeeLabel ? escapeHtml(view.cardFeeLabel) : "";
             return `<tr>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(tx.payer_display_name || tx.payer_type)}<br/>${escapeHtml(tx.event_name || "")}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.intendedLabel)}</td>
@@ -954,7 +956,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.feeLabel)}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.platformFeeLabel)}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.netLabel)}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.reconciliationLabel)}${variance ? `<br/>${variance}` : ""}${refund ? `<br/>${refund}` : ""}${platformRefund ? `<br/>${platformRefund}` : ""}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.reconciliationLabel)}${variance ? `<br/>${variance}` : ""}${cardFee ? `<br/>${cardFee}` : ""}${refund ? `<br/>${refund}` : ""}${platformRefund ? `<br/>${platformRefund}` : ""}</td>
             </tr>`;
           }).join("")}
         </tbody>

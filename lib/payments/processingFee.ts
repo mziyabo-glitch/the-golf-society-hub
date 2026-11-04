@@ -19,9 +19,13 @@
  * `platformCharge: true` so the quote's platform fee is 0 and Checkout omits
  * `application_fee_amount`.
  *
- * Society absorbs (default): Checkout charges the event fee exactly. Stripe's
- * processing fee and the platform fee both come out of the society's side,
- * because the destination charge sets `on_behalf_of` to that Connect account.
+ * Society absorbs (default): Checkout charges the event fee exactly. The
+ * destination charge sets `on_behalf_of` to the Connect account. Whether the
+ * card fee is then debited from that account depends on the account
+ * controller: a test Custom account with `fees.payer` of `application_custom`
+ * still showed the card fee on the platform balance transaction. Society net
+ * is the connected account's balance-transaction net when that transaction
+ * exists. The card fee is still the `stripe_fee` detail, recorded separately.
  *
  * Player pays: one processing line covers the estimated card fee and the
  * platform fee.
@@ -200,45 +204,80 @@ function sumFeeDetails(details: StripeFeeDetail[], type: string): number | null 
  * older charge shape and records an application fee of 0. A positive
  * application fee with no fee details is not guessed. The quote is never used.
  */
+type FeeBalance = {
+  amount?: number | null;
+  fee?: number | null;
+  net?: number | null;
+  currency?: string | null;
+  feeDetails?: StripeFeeDetail[] | null;
+};
+
+/**
+ * Split Stripe objects into the card fee, the application fee, and the
+ * society net. The card fee is the `stripe_fee` detail. The application fee
+ * is the charge amount, checked against any `application_fee` detail. Society
+ * net is the connected-account balance transaction net when that transaction
+ * is supplied. A platform balance that does not contain the application fee
+ * is not turned into a guessed society net.
+ */
 export function actualFeesFromStripe(input: {
-  balance: {
-    amount?: number | null;
-    fee?: number | null;
-    net?: number | null;
-    currency?: string | null;
-    feeDetails?: StripeFeeDetail[] | null;
-  } | null | undefined;
+  balance: FeeBalance | null | undefined;
+  destinationBalance?: FeeBalance | null;
   grossPence: number;
   applicationFeeAmount?: number | null;
 }): ActualStripeFees | null {
-  const parsed = actualProcessingFeeFromBalance(input.balance, input.grossPence);
-  if (!parsed || !input.balance) return null;
-  const details = input.balance.feeDetails;
-  if (Array.isArray(details)) {
-    const stripeFee = sumFeeDetails(details, "stripe_fee");
-    const detailApplication = sumFeeDetails(details, "application_fee");
-    if (stripeFee == null || detailApplication == null) return null;
-    if (
-      input.applicationFeeAmount != null
-      && detailApplication > 0
-      && input.applicationFeeAmount !== detailApplication
-    ) {
-      return null;
-    }
-    const applicationFee = input.applicationFeeAmount != null ? input.applicationFeeAmount : detailApplication;
-    if (!Number.isInteger(applicationFee) || applicationFee < 0) return null;
-    if (detailApplication > 0 && stripeFee + detailApplication !== parsed.feePence) return null;
-    if (detailApplication === 0 && stripeFee !== parsed.feePence) return null;
-    const societyNet = detailApplication > 0 ? parsed.netPence : parsed.netPence - applicationFee;
-    if (societyNet < 0 || stripeFee + applicationFee + societyNet !== input.grossPence) return null;
+  const platform = actualProcessingFeeFromBalance(input.balance, input.grossPence);
+  const destination = input.destinationBalance
+    ? actualProcessingFeeFromBalance(input.destinationBalance, input.grossPence)
+    : null;
+  if (!platform && !destination) return null;
+
+  const platformDetails = Array.isArray(input.balance?.feeDetails) ? input.balance.feeDetails : null;
+  const destinationDetails = Array.isArray(input.destinationBalance?.feeDetails) ? input.destinationBalance.feeDetails : null;
+  const platformStripe = platformDetails ? sumFeeDetails(platformDetails, "stripe_fee") : null;
+  const destinationStripe = destinationDetails ? sumFeeDetails(destinationDetails, "stripe_fee") : null;
+  const platformApplication = platformDetails ? sumFeeDetails(platformDetails, "application_fee") : null;
+  const destinationApplication = destinationDetails ? sumFeeDetails(destinationDetails, "application_fee") : null;
+  if (platformStripe == null && platformDetails) return null;
+  if (destinationStripe == null && destinationDetails) return null;
+  if (platformApplication == null && platformDetails) return null;
+  if (destinationApplication == null && destinationDetails) return null;
+
+  const detailApplication = (platformApplication ?? 0) + (destinationApplication ?? 0);
+  if (
+    input.applicationFeeAmount != null
+    && detailApplication > 0
+    && input.applicationFeeAmount !== detailApplication
+  ) {
+    return null;
+  }
+  const applicationFee = input.applicationFeeAmount != null
+    ? input.applicationFeeAmount
+    : (platformDetails || destinationDetails ? detailApplication : 0);
+  if (!Number.isInteger(applicationFee) || applicationFee < 0) return null;
+
+  const stripeFromDetails = (platformStripe ?? 0) + (destinationStripe ?? 0);
+  const hasStripeDetail = (platformStripe ?? 0) > 0 || (destinationStripe ?? 0) > 0;
+  let stripeFee = hasStripeDetail ? stripeFromDetails : null;
+  if (stripeFee == null && applicationFee === 0 && platform) stripeFee = platform.feePence;
+  if (stripeFee == null) return null;
+
+  if (destination) {
+    const societyNet = destination.netPence;
+    const destinationExplainsFee = destinationDetails
+      && (destinationStripe ?? 0) + (destinationApplication ?? 0) === destination.feePence;
+    if (!destinationExplainsFee) return null;
+    const bothOnSociety = stripeFee + applicationFee + societyNet === input.grossPence;
+    const cardFeeOnPlatform = applicationFee + societyNet === input.grossPence;
+    if (!bothOnSociety && !cardFeeOnPlatform) return null;
     return { stripeFeePence: stripeFee, applicationFeePence: applicationFee, societyNetPence: societyNet };
   }
-  if (input.applicationFeeAmount != null && input.applicationFeeAmount > 0) return null;
-  return {
-    stripeFeePence: parsed.feePence,
-    applicationFeePence: 0,
-    societyNetPence: parsed.netPence,
-  };
+
+  if (!platform) return null;
+  if (applicationFee > 0 && (platformApplication ?? 0) === 0) return null;
+  const societyNet = (platformApplication ?? 0) > 0 ? platform.netPence : platform.netPence;
+  if (stripeFee + applicationFee + societyNet !== input.grossPence) return null;
+  return { stripeFeePence: stripeFee, applicationFeePence: applicationFee, societyNetPence: societyNet };
 }
 
 export function processingFeeVariancePence(
@@ -306,6 +345,7 @@ export type ProcessingFeeLedgerView = {
   reconciliationLabel: string;
   refundLabel: string | null;
   platformFeeRefundLabel: string | null;
+  cardFeeLabel: string | null;
 };
 
 export function processingFeeLedgerView(row: {
@@ -325,11 +365,14 @@ export function processingFeeLedgerView(row: {
   const stripeFee = row.stripe_processing_fee_pence;
   const applicationFee = row.stripe_application_fee_pence;
   const net = row.stripe_net_pence;
-  const reconciled = stripeFee != null && net != null && (
-    applicationFee == null
-      ? stripeFee + net === row.amount_pence
-      : stripeFee + applicationFee + net === row.amount_pence
-  );
+  const bothOnSociety = stripeFee != null && applicationFee != null && net != null
+    && stripeFee + applicationFee + net === row.amount_pence;
+  const cardFeeOnPlatform = stripeFee != null && applicationFee != null && net != null
+    && applicationFee + net === row.amount_pence
+    && !bothOnSociety;
+  const legacyReconciled = stripeFee != null && net != null && applicationFee == null
+    && stripeFee + net === row.amount_pence;
+  const reconciled = bothOnSociety || cardFeeOnPlatform || legacyReconciled;
   const variance = mode === "player_pays" && row.processing_fee_variance_pence != null
     ? row.processing_fee_variance_pence
     : null;
@@ -352,5 +395,6 @@ export function processingFeeLedgerView(row: {
     platformFeeRefundLabel: refundedApplicationFee != null && refundedApplicationFee > 0
       ? `Platform fee refunded ${formatGbpFromPence(refundedApplicationFee)}`
       : null,
+    cardFeeLabel: cardFeeOnPlatform ? "Stripe card fee is on the platform balance" : null,
   };
 }
