@@ -54,13 +54,16 @@ export function shouldShowOnlinePayNow(input: {
   amountPence: number | null;
   alreadyPaid: boolean;
   playing: boolean;
+  /** Local staging only. Does not replace the playing, unpaid, or fee checks. */
+  stagingPlatformCharge?: boolean;
 }): boolean {
   if (!input.playing || input.alreadyPaid) return false;
   if (!input.society?.online_payments_enabled) return false;
+  if (input.amountPence == null || input.amountPence <= 0) return false;
+  if (input.stagingPlatformCharge === true) return true;
   if (!input.society.stripe_connect_charges_enabled || !input.society.stripe_connect_account_id?.trim()) {
     return false;
   }
-  if (input.amountPence == null || input.amountPence <= 0) return false;
   return true;
 }
 

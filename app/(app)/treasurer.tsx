@@ -502,10 +502,15 @@ export default function TreasurerScreen() {
                     {tx.payer_display_name || (tx.payer_type === "guest" ? "Guest" : "Member")} · {tx.status}
                     {tx.resolution_required ? " · needs resolution" : ""}
                   </AppText>
-                  <AppText variant="caption" color="muted" numberOfLines={1}>
+                  <AppText variant="caption" color="muted" numberOfLines={2}>
                     {tx.event_name ? `${tx.event_name} · ` : ""}
                     {new Date(tx.completed_at ?? tx.created_at).toLocaleDateString("en-GB")}
                   </AppText>
+                  {tx.event_name?.includes("staging platform charge") ? (
+                    <AppText variant="caption" color="muted">
+                      Staging platform charge, not a Connect allocation
+                    </AppText>
+                  ) : null}
                   {tx.stripe_receipt_url ? (
                     <AppText variant="caption" color="muted" numberOfLines={1}>
                       {tx.stripe_receipt_url}

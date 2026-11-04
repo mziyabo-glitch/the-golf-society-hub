@@ -218,6 +218,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === "/api/stripe/staging-platform-charge" && req.method === "GET") {
+    const { stagingPlatformChargePermitted } = await import("../lib/payments/stagingPlatformCharge");
+    res.writeHead(200, { ...corsHeaders, "Content-Type": "application/json" });
+    res.end(JSON.stringify({ enabled: stagingPlatformChargePermitted(process.env) }));
+    return;
+  }
+
   if (pathname === "/api/stripe/guest-checkout" && req.method === "POST") {
     try {
       const { handleCreateGuestCheckoutSession } = await import("../lib/payments/guestCheckout");

@@ -17,6 +17,7 @@ import {
 } from "@/lib/payments/checkoutAttempt";
 import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
+import { routeStagingCheckout, stagingPlatformChargeDecision } from "@/lib/payments/stagingPlatformCharge";
 import {
   CheckoutConflictError,
   runEventCheckout,
@@ -107,6 +108,7 @@ export function createPaymentCheckoutStore(admin: ReturnType<typeof getServiceRo
 
 export type MemberCheckoutDeps = {
   stripeKey: string;
+  env?: Record<string, string | undefined>;
   prepare: (input: {
     accessToken: string;
     idempotencyKey: string;
@@ -152,9 +154,6 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
         .maybeSingle();
       if (socErr || !society) return { ok: false, result: { status: 404, body: { error: "Society not found" } } };
 
-      const societyReadyErr = validateSocietyPaymentsReady(society);
-      if (societyReadyErr) return { ok: false, result: { status: 403, body: { error: societyReadyErr } } };
-
       const beneficiarySocietyId = chosenBeneficiarySocietyId(links ?? [], body.societyId, hostSocietyId);
       const beneficiaryRouteError = paymentBeneficiaryError({
         beneficiarySocietyId,
@@ -167,8 +166,29 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
         .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
         .eq("id", beneficiarySocietyId)
         .maybeSingle();
-      if (!beneficiary?.stripe_connect_account_id || !beneficiary.stripe_connect_charges_enabled) {
+      const beneficiaryChargesEnabled = beneficiary?.stripe_connect_charges_enabled === true;
+      const beneficiaryConnectAccountId = (beneficiary?.stripe_connect_account_id as string | null) ?? null;
+      const stagingDecision = stagingPlatformChargeDecision({
+        env: process.env,
+        stripeKey,
+        chargesEnabled: beneficiaryChargesEnabled,
+        connectAccountId: beneficiaryConnectAccountId,
+      });
+      if (stagingDecision.mode === "refused") {
+        return { ok: false, result: { status: 403, body: { error: stagingDecision.reason } } };
+      }
+      if (!society.online_payments_enabled) {
+        return { ok: false, result: { status: 403, body: { error: "Online payments are not enabled for this society." } } };
+      }
+      if (!beneficiary) {
         return { ok: false, result: { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } } };
+      }
+      if (stagingDecision.mode !== "platform") {
+        const societyReadyErr = validateSocietyPaymentsReady(society);
+        if (societyReadyErr) return { ok: false, result: { status: 403, body: { error: societyReadyErr } } };
+        if (!beneficiaryConnectAccountId || !beneficiaryChargesEnabled) {
+          return { ok: false, result: { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } } };
+        }
       }
 
       const { data: callerMember } = await admin
@@ -254,7 +274,8 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
           eventName: String(event.name || "Golf event"),
           eventDateSnapshot: event.date ? String(event.date) : null,
           payerDisplayName: String(callerMember.display_name || "Member"),
-          connectAccountId: beneficiary.stripe_connect_account_id as string,
+          connectAccountId: beneficiaryConnectAccountId,
+          beneficiaryChargesEnabled,
           successUrl: urls.successUrl,
           cancelUrl: urls.cancelUrl,
           rows: (participantRows ?? []) as OpenPaymentRow[],
@@ -301,7 +322,9 @@ export async function handleCreateEventCheckoutSession(
     const runtime = deps ?? buildDefaultMemberCheckoutDeps(stripeKey as string);
     const prepared = await runtime.prepare({ accessToken: token, idempotencyKey, body });
     if (!prepared.ok) return prepared.result;
-    return await runEventCheckout({ ...prepared.checkout, stripe: runtime.stripe, store: runtime.store });
+    const routed = routeStagingCheckout(prepared.checkout, deps?.env ?? process.env, stripeKey);
+    if (!routed.ok) return { status: 403, body: { error: routed.error } };
+    return await runEventCheckout({ ...routed.checkout, stripe: runtime.stripe, store: runtime.store });
   } catch (err) {
     if (err instanceof CheckoutConflictError) return { status: 409, body: { error: err.message } };
     console.error("[checkout] unexpected:", err);

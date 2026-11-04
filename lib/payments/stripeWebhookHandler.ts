@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import { getServiceRoleSupabase } from "@/lib/server/supabaseServiceRole";
+import { stagingPlatformChargePermitted } from "@/lib/payments/stagingPlatformCharge";
 import {
   paymentApplyFailureStatus,
   stripeEventDisposition,
@@ -48,10 +49,15 @@ function getStripe(): Stripe {
   return new Stripe(key);
 }
 
-function destinationAccountId(intent: Stripe.PaymentIntent): string | null {
+export function connectedDestinationAccountId(intent: {
+  transfer_data?: { destination?: string | { id: string } | null } | null;
+  on_behalf_of?: string | { id: string } | null;
+}): string | null {
   const destination = intent.transfer_data?.destination;
-  if (!destination) return null;
-  return typeof destination === "string" ? destination : destination.id;
+  const behalf = intent.on_behalf_of;
+  const destId = !destination ? "" : typeof destination === "string" ? destination : destination.id;
+  const behalfId = !behalf ? "" : typeof behalf === "string" ? behalf : behalf.id;
+  return destId || behalfId || null;
 }
 
 function receiptUrl(intent: Stripe.PaymentIntent): string | null {
@@ -103,7 +109,8 @@ function defaultDeps(): StripeWebhookDeps {
         amount: intent.amount,
         currency: intent.currency,
         status: intent.status,
-        destinationAccountId: destinationAccountId(intent),
+        destinationAccountId: connectedDestinationAccountId(intent),
+        applicationFeeAmount: intent.application_fee_amount,
         receiptUrl: receiptUrl(intent),
       };
     },
@@ -255,6 +262,7 @@ export async function handleStripeWebhook(
       paymentIntent,
       transaction,
       beneficiaryConnectAccountId: beneficiaryConnectAccount,
+      allowStagingPlatformCharge: stagingPlatformChargePermitted(process.env),
     });
     if (!verified.ok) return { status: verified.status, body: { error: verified.error } };
     await runtime.applyPayment(verified.payment);

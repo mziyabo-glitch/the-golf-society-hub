@@ -1,11 +1,31 @@
 import { supabase } from "@/lib/supabase";
 import * as Crypto from "expo-crypto";
 
-function checkoutApiBase(): string {
+export function checkoutApiBase(): string {
   if (typeof window !== "undefined" && window.location?.origin) {
+    const url = new URL(window.location.origin);
+    const host = url.hostname;
+    if ((host === "localhost" || host === "127.0.0.1") && url.port === "8081") {
+      url.port = "3001";
+      return url.origin;
+    }
     return window.location.origin;
   }
   return process.env.EXPO_PUBLIC_WEB_APP_URL?.trim() || "http://localhost:3001";
+}
+
+export async function fetchStagingPlatformChargeEnabled(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  if (host !== "localhost" && host !== "127.0.0.1") return false;
+  try {
+    const res = await fetch(`${checkoutApiBase()}/api/stripe/staging-platform-charge`);
+    if (!res.ok) return false;
+    const body = (await res.json()) as { enabled?: boolean };
+    return body.enabled === true;
+  } catch {
+    return false;
+  }
 }
 
 async function getAccessToken(): Promise<string> {

@@ -16,17 +16,27 @@ type RefundTransaction = {
   status: string;
   payment_method: string;
   stripe_payment_intent_id: string | null;
+  stripe_connect_account_id?: string | null;
   stripe_refund_id: string | null;
   amount_pence: number;
   currency: string;
 };
+
+export function refundCreateParams(
+  paymentIntentId: string,
+  connectAccountId: string | null | undefined,
+): Stripe.RefundCreateParams {
+  const params: Stripe.RefundCreateParams = { payment_intent: paymentIntentId };
+  if (connectAccountId?.trim()) params.reverse_transfer = true;
+  return params;
+}
 
 type RefundDeps = {
   stripeKey: string;
   getUserId: (accessToken: string) => Promise<string | null>;
   loadCallerRole: (userId: string, societyId: string) => Promise<string | null>;
   loadTransaction: (id: string) => Promise<RefundTransaction | null>;
-  createRefund: (paymentIntentId: string, idempotencyKey: string) => Promise<StripeRefundCheck>;
+  createRefund: (paymentIntentId: string, idempotencyKey: string, connectAccountId?: string | null) => Promise<StripeRefundCheck>;
   retrieveRefund: (refundId: string) => Promise<StripeRefundCheck | null>;
   recordRefund: (transactionId: string, refundId: string, status: RefundRecordStatus) => Promise<void>;
 };
@@ -71,15 +81,15 @@ function defaultDeps(): RefundDeps {
     async loadTransaction(id) {
       const { data } = await admin
         .from("payment_transactions")
-        .select("id, society_id, status, payment_method, stripe_payment_intent_id, stripe_refund_id, amount_pence, currency")
+        .select("id, society_id, status, payment_method, stripe_payment_intent_id, stripe_connect_account_id, stripe_refund_id, amount_pence, currency")
         .eq("id", id)
         .maybeSingle();
       return (data as RefundTransaction | null) ?? null;
     },
-    async createRefund(paymentIntentId, idempotencyKey) {
+    async createRefund(paymentIntentId, idempotencyKey, connectAccountId) {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
       const refund = await stripe.refunds.create(
-        { payment_intent: paymentIntentId, reverse_transfer: true },
+        refundCreateParams(paymentIntentId, connectAccountId),
         { idempotencyKey },
       );
       return mapRefund(refund);
@@ -159,7 +169,11 @@ export async function handleRefundEventPayment(
       return { status: 409, body: { error: "Only a succeeded Stripe payment can be refunded" } };
     }
 
-    const created = await runtime.createRefund(transaction.stripe_payment_intent_id, `refund_${idempotencyKey}`);
+    const created = await runtime.createRefund(
+      transaction.stripe_payment_intent_id,
+      `refund_${idempotencyKey}`,
+      transaction.stripe_connect_account_id,
+    );
     const confirmed = await runtime.retrieveRefund(created.id);
     if (!confirmed || confirmed.id !== created.id) {
       return { status: 422, body: { error: "Stripe refund could not be confirmed" } };

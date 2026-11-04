@@ -118,6 +118,7 @@ describe("stripe payment foundation", () => {
       "supabase/migrations/20261030190000_stripe_payment_integrity.sql",
       "supabase/migrations/20261030200000_guest_payment_invitations.sql",
       "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql",
+      "supabase/migrations/20261104021500_staging_platform_charge_apply.sql",
     ]) {
       const version = path.basename(file).slice(0, 14);
       const hour = Number(version.slice(8, 10));
@@ -128,6 +129,14 @@ describe("stripe payment foundation", () => {
       expect(minute).toBeLessThanOrEqual(59);
       expect(second).toBeLessThanOrEqual(59);
     }
+    const platformSql = readFileSync(
+      path.join(root, "supabase/migrations/20261104021500_staging_platform_charge_apply.sql"),
+      "utf8",
+    );
+    expect(platformSql).toContain("enabled boolean NOT NULL DEFAULT false");
+    expect(platformSql).not.toContain("SET enabled = true");
+    expect(platformSql).not.toContain("ALTER DATABASE");
+    expect(platformSql).toContain("payment_connect_account_mismatch");
   });
 
   it("keeps online pay now off unless Connect is ready and the player is playing and unpaid", () => {
@@ -138,6 +147,29 @@ describe("stripe payment foundation", () => {
     };
     expect(shouldShowOnlinePayNow({ society, event: {}, amountPence: 4500, alreadyPaid: false, playing: true })).toBe(true);
     expect(shouldShowOnlinePayNow({ society: { ...society, online_payments_enabled: false }, event: {}, amountPence: 4500, alreadyPaid: false, playing: true })).toBe(false);
+    expect(shouldShowOnlinePayNow({
+      society: { online_payments_enabled: true, stripe_connect_charges_enabled: false, stripe_connect_account_id: "acct_test" },
+      event: {},
+      amountPence: 2500,
+      alreadyPaid: false,
+      playing: true,
+    })).toBe(false);
+    expect(shouldShowOnlinePayNow({
+      society: { online_payments_enabled: true, stripe_connect_charges_enabled: false },
+      event: {},
+      amountPence: 2500,
+      alreadyPaid: false,
+      playing: true,
+      stagingPlatformCharge: true,
+    })).toBe(true);
+    expect(shouldShowOnlinePayNow({
+      society: { online_payments_enabled: false },
+      event: {},
+      amountPence: 2500,
+      alreadyPaid: false,
+      playing: true,
+      stagingPlatformCharge: true,
+    })).toBe(false);
     expect(validateSocietyPaymentsReady({ ...society, online_payments_enabled: false })).toMatch(/not enabled/i);
   });
 

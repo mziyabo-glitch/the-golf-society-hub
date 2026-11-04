@@ -1,3 +1,8 @@
+import {
+  STAGING_PLATFORM_CHARGE_METADATA_KEY,
+  STAGING_PLATFORM_CHARGE_METADATA_VALUE,
+} from "@/lib/payments/stagingPlatformCharge";
+
 export type PaymentTransactionCheck = {
   id: string;
   status: string;
@@ -31,6 +36,7 @@ export type PaymentIntentCheck = {
   currency: string;
   status: string;
   destinationAccountId: string | null;
+  applicationFeeAmount?: number | null;
   receiptUrl: string | null;
 };
 
@@ -108,6 +114,8 @@ export function verifyPaidCheckout(input: {
   paymentIntent: PaymentIntentCheck | null;
   transaction: PaymentTransactionCheck | null;
   beneficiaryConnectAccountId: string | null;
+  /** True only when STAGING_PLATFORM_ONLY_PAYMENTS is safely on. */
+  allowStagingPlatformCharge?: boolean;
 }): PaymentVerification {
   const session = input.session;
   if (!input.transaction) {
@@ -166,8 +174,22 @@ export function verifyPaidCheckout(input: {
   if (intent.amount !== tx.amount_pence || intent.currency.toLowerCase() !== "gbp") {
     return { ok: false, status: 422, error: "PaymentIntent amount or currency mismatch", code: "payment_intent_amount_mismatch" };
   }
-  const connectAccountId = input.beneficiaryConnectAccountId?.trim() || "";
-  if (
+  const stagingPlatformCharge = meta(session, STAGING_PLATFORM_CHARGE_METADATA_KEY) === STAGING_PLATFORM_CHARGE_METADATA_VALUE;
+  let connectAccountId = input.beneficiaryConnectAccountId?.trim() || "";
+  if (stagingPlatformCharge) {
+    if (!input.allowStagingPlatformCharge) {
+      return {
+        ok: false,
+        status: 422,
+        error: "Staging platform charge is not permitted",
+        code: "payment_staging_platform_refused",
+      };
+    }
+    if (intent.destinationAccountId || (intent.applicationFeeAmount ?? 0) > 0 || (tx.stripe_connect_account_id ?? "").trim()) {
+      return { ok: false, status: 422, error: "Connect account mismatch", code: "payment_connect_account_mismatch" };
+    }
+    connectAccountId = "";
+  } else if (
     !connectAccountId ||
     intent.destinationAccountId !== connectAccountId ||
     tx.stripe_connect_account_id !== connectAccountId

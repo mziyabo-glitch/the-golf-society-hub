@@ -5,6 +5,11 @@ import {
   stripeCheckoutIdempotencyKey,
   type OpenPaymentRow,
 } from "@/lib/payments/checkoutAttempt";
+import {
+  STAGING_PLATFORM_CHARGE_METADATA_KEY,
+  STAGING_PLATFORM_CHARGE_METADATA_VALUE,
+  STAGING_PLATFORM_CHARGE_ROUTE,
+} from "@/lib/payments/stagingPlatformCharge";
 
 export type CreateCheckoutResult =
   | { status: number; body: { url: string; sessionId: string; transactionId: string } }
@@ -45,7 +50,7 @@ export type PendingPaymentInsert = {
   payerDisplayName: string;
   amountPence: number;
   idempotencyKey: string;
-  stripeConnectAccountId: string;
+  stripeConnectAccountId: string | null;
 };
 
 export type CheckoutStore = {
@@ -68,7 +73,11 @@ export type RunCheckoutInput = {
   eventName: string;
   eventDateSnapshot: string | null;
   payerDisplayName: string;
-  connectAccountId: string;
+  connectAccountId: string | null;
+  /** True only when the beneficiary Connect account can already take charges. */
+  beneficiaryChargesEnabled?: boolean;
+  /** Staging-only direct charge on the platform account. No Connect transfer. */
+  platformCharge?: boolean;
   successUrl: string;
   cancelUrl: string;
   rows: OpenPaymentRow[];
@@ -128,7 +137,21 @@ function sessionUsability(session: CheckoutSessionSnapshot): SessionUsability {
   return "unknown";
 }
 
-function sessionParams(input: RunCheckoutInput, transactionId: string): Stripe.Checkout.SessionCreateParams {
+export function sessionParams(input: RunCheckoutInput, transactionId: string): Stripe.Checkout.SessionCreateParams {
+  const platformCharge = input.platformCharge === true;
+  const metadata: Stripe.MetadataParam = {
+    payment_transaction_id: transactionId,
+    event_id: input.eventId,
+    society_id: input.societyId,
+    beneficiary_society_id: input.beneficiarySocietyId,
+    payer_type: input.payerType,
+    member_id: input.memberId ?? "",
+    guest_id: input.guestId ?? "",
+  };
+  if (platformCharge) {
+    metadata[STAGING_PLATFORM_CHARGE_METADATA_KEY] = STAGING_PLATFORM_CHARGE_METADATA_VALUE;
+    metadata.charge_route = STAGING_PLATFORM_CHARGE_ROUTE;
+  }
   return {
     mode: "payment",
     success_url: input.successUrl,
@@ -144,18 +167,15 @@ function sessionParams(input: RunCheckoutInput, transactionId: string): Stripe.C
         },
       },
     ],
-    payment_intent_data: {
-      transfer_data: { destination: input.connectAccountId },
-    },
-    metadata: {
-      payment_transaction_id: transactionId,
-      event_id: input.eventId,
-      society_id: input.societyId,
-      beneficiary_society_id: input.beneficiarySocietyId,
-      payer_type: input.payerType,
-      member_id: input.memberId ?? "",
-      guest_id: input.guestId ?? "",
-    },
+    // A staging platform charge must not set transfer_data, on_behalf_of, or application_fee_amount.
+    ...(platformCharge
+      ? {}
+      : {
+          payment_intent_data: {
+            transfer_data: { destination: input.connectAccountId ?? "" },
+          },
+        }),
+    metadata,
   };
 }
 

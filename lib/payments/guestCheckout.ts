@@ -17,6 +17,7 @@ import {
   isGuestPaymentToken,
   type GuestInvitationCheck,
 } from "@/lib/payments/guestPaymentToken";
+import { routeStagingCheckout, stagingPlatformChargeDecision } from "@/lib/payments/stagingPlatformCharge";
 import {
   CheckoutConflictError,
   runEventCheckout,
@@ -67,6 +68,7 @@ type GuestCheckoutContext = {
 
 export type GuestCheckoutDeps = {
   stripeKey: string;
+  env?: Record<string, string | undefined>;
   loadContext: (input: { tokenHash: string; idempotencyKey: string; guestId: string; eventId: string }) => Promise<GuestCheckoutContext>;
   markInvitationUsed: (guestId: string) => Promise<void>;
   stripe: RunCheckoutInput["stripe"];
@@ -250,10 +252,25 @@ export async function handleCreateGuestCheckoutSession(
     if (guest.society_id !== body.societyId) return { status: 403, body: { error: "Guest belongs to another society" } };
     if (guest.paid) return { status: 409, body: { error: "Already paid" } };
 
-    const societyError = validateSocietyPaymentsReady(context.society);
-    if (societyError) return { status: 403, body: { error: societyError } };
-    if (!context.beneficiary?.stripe_connect_account_id || !context.beneficiary.stripe_connect_charges_enabled) {
+    if (!context.society?.online_payments_enabled) {
+      return { status: 403, body: { error: "Online payments are not enabled for this society." } };
+    }
+    if (!context.beneficiary) {
       return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
+    }
+    const stagingDecision = stagingPlatformChargeDecision({
+      env: deps?.env ?? process.env,
+      stripeKey,
+      chargesEnabled: context.beneficiary.stripe_connect_charges_enabled === true,
+      connectAccountId: context.beneficiary.stripe_connect_account_id,
+    });
+    if (stagingDecision.mode === "refused") return { status: 403, body: { error: stagingDecision.reason } };
+    if (stagingDecision.mode !== "platform") {
+      const societyError = validateSocietyPaymentsReady(context.society);
+      if (societyError) return { status: 403, body: { error: societyError } };
+      if (!context.beneficiary.stripe_connect_account_id || !context.beneficiary.stripe_connect_charges_enabled) {
+        return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
+      }
     }
     if (context.event) {
       const routeError = paymentBeneficiaryError({
@@ -277,25 +294,34 @@ export async function handleCreateGuestCheckoutSession(
 
     const urls = buildCheckoutReturnUrls(body.eventId, serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL));
     const openRows = context.rows.filter((row) => row.status === "pending" || row.status === "succeeded" || row.status === "refund_pending");
+    const routed = routeStagingCheckout(
+      {
+        amountPence: claim.amountPence,
+        idempotencyKey,
+        payerType: "guest" as const,
+        memberId: null,
+        guestId: guest.id,
+        eventId: body.eventId,
+        societyId: body.societyId,
+        beneficiarySocietyId: context.beneficiary.id,
+        societyName: String(context.society?.name || "Society"),
+        beneficiarySocietyName: String(context.beneficiary.name || context.society?.name || "Society"),
+        eventName: String(context.event?.name || "Golf event"),
+        eventDateSnapshot: context.event?.date ? String(context.event.date) : null,
+        payerDisplayName: String(guest.name || "Guest"),
+        connectAccountId: context.beneficiary.stripe_connect_account_id,
+        beneficiaryChargesEnabled: context.beneficiary.stripe_connect_charges_enabled === true,
+        successUrl: urls.successUrl,
+        cancelUrl: urls.cancelUrl,
+        rows: openRows,
+        keyed: context.keyed,
+      },
+      deps?.env ?? process.env,
+      stripeKey,
+    );
+    if (!routed.ok) return { status: 403, body: { error: routed.error } };
     return await runEventCheckout({
-      amountPence: claim.amountPence,
-      idempotencyKey,
-      payerType: "guest",
-      memberId: null,
-      guestId: guest.id,
-      eventId: body.eventId,
-      societyId: body.societyId,
-      beneficiarySocietyId: context.beneficiary.id,
-      societyName: String(context.society?.name || "Society"),
-      beneficiarySocietyName: String(context.beneficiary.name || context.society?.name || "Society"),
-      eventName: String(context.event?.name || "Golf event"),
-      eventDateSnapshot: context.event?.date ? String(context.event.date) : null,
-      payerDisplayName: String(guest.name || "Guest"),
-      connectAccountId: context.beneficiary.stripe_connect_account_id,
-      successUrl: urls.successUrl,
-      cancelUrl: urls.cancelUrl,
-      rows: openRows,
-      keyed: context.keyed,
+      ...routed.checkout,
       stripe: runtime.stripe,
       store: runtime.store,
     });

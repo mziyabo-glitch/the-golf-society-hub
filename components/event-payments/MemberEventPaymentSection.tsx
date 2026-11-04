@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Linking, Platform, View, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 
@@ -11,7 +11,7 @@ import {
   shouldShowOnlinePayNow,
   type SocietyPaymentConfig,
 } from "@/lib/payments/eventPricing";
-import { startMemberEventCheckout } from "@/lib/payments/eventPaymentCheckout";
+import { fetchStagingPlatformChargeEnabled, startMemberEventCheckout } from "@/lib/payments/eventPaymentCheckout";
 
 type Props = {
   eventId: string;
@@ -35,6 +35,19 @@ export function MemberEventPaymentSection({
   const colors = getColors();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stagingPlatformCharge, setStagingPlatformCharge] = useState(false);
+  const connectReady = Boolean(society?.stripe_connect_charges_enabled && society?.stripe_connect_account_id?.trim());
+
+  useEffect(() => {
+    if (connectReady || !society?.online_payments_enabled || !playing || paid) return;
+    let cancelled = false;
+    void fetchStagingPlatformChargeEnabled().then((enabled) => {
+      if (!cancelled) setStagingPlatformCharge(enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectReady, society?.online_payments_enabled, playing, paid]);
 
   const showPayNow = shouldShowOnlinePayNow({
     society,
@@ -42,6 +55,7 @@ export function MemberEventPaymentSection({
     amountPence,
     alreadyPaid: paid,
     playing,
+    stagingPlatformCharge,
   });
 
   const bankCopy = bankTransferInstructions?.trim() || society?.event_bank_transfer_instructions?.trim();
