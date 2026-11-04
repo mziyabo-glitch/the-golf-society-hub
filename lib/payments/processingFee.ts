@@ -1,24 +1,51 @@
 /**
- * Card processing fees for online event payments.
+ * Card processing fees and the Golf Society Hub platform fee.
  *
- * Stripe UK standard consumer-card pricing is the default schedule:
- * 1.5% + 20 pence. Change the quote for future payments only by editing
- * `DEFAULT_PROCESSING_FEE_SCHEDULE` in this file. A payment stores the mode
- * and the estimated line it was given; a later edit does not rewrite that row.
+ * Stripe UK consumer-card pricing stays in `DEFAULT_PROCESSING_FEE_SCHEDULE`:
+ * 1.5% + 20 pence. Do not edit that schedule to match a later actual Stripe
+ * fee. The ledger stores the balance transaction's stripe_fee, and player-pays
+ * variance is that actual fee minus the card portion of the quote.
  *
- * Society absorbs (default): Checkout charges the event fee exactly.
- * Player pays: Checkout adds a processing-fee line so the gross is
- *   charged = ceil((intended_pence + fixed_pence) / (1 - rate))
- * where rate = basis_points / 10000. The ceiling is integer pence, so the
- * society is not short when Stripe charges exactly that schedule.
+ * Golf Society Hub charges its own platform fee on each Connect destination
+ * charge. The rate is `PLATFORM_FEE_BASIS_POINTS` (200 = 2.00% of the intended
+ * event fee). Whole pence, half up:
+ *   platform_fee = floor((intended_pence * basis_points + 5000) / 10000)
+ * 2500 pence -> 50. 333 pence at 2% is 6.66 -> 7. 25 pence at 2% is 0.5 -> 1.
+ * The fee is computed on the intended event fee, not on the grossed-up total.
+ * Checkout sends it as Stripe Connect `application_fee_amount`.
  *
- * The ledger fee is the Stripe balance transaction fee. The estimate is never
- * copied into that column. Player-pays variance is actual fee minus the
- * estimated line, in pence, and may be negative.
+ * A staging platform-only charge (`STAGING_PLATFORM_ONLY_PAYMENTS` exactly
+ * true, no Connect destination) has no application fee. Pass
+ * `platformCharge: true` so the quote's platform fee is 0 and Checkout omits
+ * `application_fee_amount`.
+ *
+ * Society absorbs (default): Checkout charges the event fee exactly. Stripe's
+ * processing fee and the platform fee both come out of the society's side,
+ * because the destination charge sets `on_behalf_of` to that Connect account.
+ *
+ * Player pays: one processing line covers the estimated card fee and the
+ * platform fee.
+ *   charged = ceil((intended + card_fixed + platform_fee) / (1 - card_rate))
+ * The quoted total is intended to leave the society the event fee after both.
+ * The card rate is still the schedule above.
+ *
+ * The payment row snapshots `platform_fee_basis_points` and
+ * `platform_fee_pence`. A later rate change does not rewrite that row. The
+ * recorded Stripe fee and the recorded application fee come only from Stripe
+ * objects, never from this quote.
+ *
+ * A full Connect refund sets `refund_application_fee: true` so Stripe returns
+ * the platform fee with the charge. The ledger does not invent a fee on the
+ * refund row. It keeps the actuals already taken from the charge, and records
+ * `stripe_application_fee_refunded_pence` only from Stripe's ApplicationFee
+ * `amount_refunded`.
  */
 
 export const STRIPE_UK_CARD_FEE_BASIS_POINTS = 150;
 export const STRIPE_UK_CARD_FEE_FIXED_PENCE = 20;
+export const PLATFORM_FEE_BASIS_POINTS = 200;
+
+export const PLAYER_PROCESSING_FEE_LABEL = "Processing fee (card fee and Golf Society Hub platform fee)";
 
 export type ProcessingFeeMode = "society_absorbs" | "player_pays";
 
@@ -41,6 +68,10 @@ export type CheckoutChargeQuote = {
   grossPence: number;
   basisPoints: number;
   fixedPence: number;
+  platformFeeBasisPoints: number;
+  platformFeePence: number;
+  applicationFeeAmount: number;
+  platformCharge: boolean;
 };
 
 export function normalizeProcessingFeeMode(value: string | null | undefined): ProcessingFeeMode {
@@ -51,8 +82,23 @@ export function processingFeeModeLabel(mode: ProcessingFeeMode): string {
   return mode === "player_pays" ? "Player pays processing fees" : "Society absorbs processing fees";
 }
 
-/** Integer ceiling of (intended + fixed) / (1 - basis_points/10000). */
-export function grossUpChargePence(intendedPence: number, schedule: ProcessingFeeSchedule = DEFAULT_PROCESSING_FEE_SCHEDULE): number {
+/** Half-up whole pence. 2% of 2500 is 50. 2% of 333 is 7. 2% of 25 is 1. */
+export function platformFeePence(intendedPence: number, basisPoints: number = PLATFORM_FEE_BASIS_POINTS): number {
+  if (!Number.isInteger(intendedPence) || intendedPence < 0) {
+    throw new Error("Intended fee must be zero or more pence");
+  }
+  if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints >= 10000) {
+    throw new Error("Platform fee rate must be basis points from 0 up to but not including 10000");
+  }
+  return Math.floor((intendedPence * basisPoints + 5000) / 10000);
+}
+
+/** Integer ceiling of (intended + fixed + extra) / (1 - basis_points/10000). */
+export function grossUpChargePence(
+  intendedPence: number,
+  schedule: ProcessingFeeSchedule = DEFAULT_PROCESSING_FEE_SCHEDULE,
+  extraPence = 0,
+): number {
   if (!Number.isInteger(intendedPence) || intendedPence <= 0) {
     throw new Error("Intended fee must be a positive number of pence");
   }
@@ -62,8 +108,11 @@ export function grossUpChargePence(intendedPence: number, schedule: ProcessingFe
   if (!Number.isInteger(schedule.fixedPence) || schedule.fixedPence < 0) {
     throw new Error("Processing fee fixed amount must be zero or more pence");
   }
+  if (!Number.isInteger(extraPence) || extraPence < 0) {
+    throw new Error("Extra amount must be zero or more pence");
+  }
   const denominator = 10000 - schedule.basisPoints;
-  const numerator = (intendedPence + schedule.fixedPence) * 10000;
+  const numerator = (intendedPence + schedule.fixedPence + extraPence) * 10000;
   return Math.floor((numerator + denominator - 1) / denominator);
 }
 
@@ -71,7 +120,11 @@ export function quoteCheckoutCharge(
   intendedPence: number,
   mode: string | null | undefined,
   schedule: ProcessingFeeSchedule = DEFAULT_PROCESSING_FEE_SCHEDULE,
+  options: { platformCharge?: boolean } = {},
 ): CheckoutChargeQuote {
+  const platformCharge = options.platformCharge === true;
+  const platformFeeBasisPoints = platformCharge ? 0 : PLATFORM_FEE_BASIS_POINTS;
+  const feePence = platformCharge ? 0 : platformFeePence(intendedPence, PLATFORM_FEE_BASIS_POINTS);
   const normalized = normalizeProcessingFeeMode(mode);
   if (normalized === "society_absorbs") {
     return {
@@ -81,9 +134,13 @@ export function quoteCheckoutCharge(
       grossPence: intendedPence,
       basisPoints: schedule.basisPoints,
       fixedPence: schedule.fixedPence,
+      platformFeeBasisPoints,
+      platformFeePence: feePence,
+      applicationFeeAmount: feePence,
+      platformCharge,
     };
   }
-  const grossPence = grossUpChargePence(intendedPence, schedule);
+  const grossPence = grossUpChargePence(intendedPence, schedule, feePence);
   return {
     mode: normalized,
     intendedPence,
@@ -91,6 +148,10 @@ export function quoteCheckoutCharge(
     grossPence,
     basisPoints: schedule.basisPoints,
     fixedPence: schedule.fixedPence,
+    platformFeeBasisPoints,
+    platformFeePence: feePence,
+    applicationFeeAmount: feePence,
+    platformCharge,
   };
 }
 
@@ -115,9 +176,79 @@ export function actualProcessingFeeFromBalance(
   return { feePence: fee, netPence: net };
 }
 
-export function processingFeeVariancePence(mode: ProcessingFeeMode, estimatedProcessingFeePence: number, actualFeePence: number): number | null {
+export type StripeFeeDetail = { type?: string | null; amount?: number | null };
+
+export type ActualStripeFees = {
+  stripeFeePence: number;
+  applicationFeePence: number;
+  societyNetPence: number;
+};
+
+function sumFeeDetails(details: StripeFeeDetail[], type: string): number | null {
+  let sum = 0;
+  for (const detail of details) {
+    if ((detail.type ?? "") !== type) continue;
+    if (!Number.isInteger(detail.amount) || (detail.amount as number) < 0) return null;
+    sum += detail.amount as number;
+  }
+  return sum;
+}
+
+/**
+ * Split a real Stripe balance transaction into the card fee and the
+ * application fee. A missing application-fee field with no fee details is the
+ * older charge shape and records an application fee of 0. A positive
+ * application fee with no fee details is not guessed. The quote is never used.
+ */
+export function actualFeesFromStripe(input: {
+  balance: {
+    amount?: number | null;
+    fee?: number | null;
+    net?: number | null;
+    currency?: string | null;
+    feeDetails?: StripeFeeDetail[] | null;
+  } | null | undefined;
+  grossPence: number;
+  applicationFeeAmount?: number | null;
+}): ActualStripeFees | null {
+  const parsed = actualProcessingFeeFromBalance(input.balance, input.grossPence);
+  if (!parsed || !input.balance) return null;
+  const details = input.balance.feeDetails;
+  if (Array.isArray(details)) {
+    const stripeFee = sumFeeDetails(details, "stripe_fee");
+    const detailApplication = sumFeeDetails(details, "application_fee");
+    if (stripeFee == null || detailApplication == null) return null;
+    if (
+      input.applicationFeeAmount != null
+      && detailApplication > 0
+      && input.applicationFeeAmount !== detailApplication
+    ) {
+      return null;
+    }
+    const applicationFee = input.applicationFeeAmount != null ? input.applicationFeeAmount : detailApplication;
+    if (!Number.isInteger(applicationFee) || applicationFee < 0) return null;
+    if (detailApplication > 0 && stripeFee + detailApplication !== parsed.feePence) return null;
+    if (detailApplication === 0 && stripeFee !== parsed.feePence) return null;
+    const societyNet = detailApplication > 0 ? parsed.netPence : parsed.netPence - applicationFee;
+    if (societyNet < 0 || stripeFee + applicationFee + societyNet !== input.grossPence) return null;
+    return { stripeFeePence: stripeFee, applicationFeePence: applicationFee, societyNetPence: societyNet };
+  }
+  if (input.applicationFeeAmount != null && input.applicationFeeAmount > 0) return null;
+  return {
+    stripeFeePence: parsed.feePence,
+    applicationFeePence: 0,
+    societyNetPence: parsed.netPence,
+  };
+}
+
+export function processingFeeVariancePence(
+  mode: ProcessingFeeMode,
+  estimatedProcessingFeePence: number,
+  actualFeePence: number,
+  snapshotPlatformFeePence = 0,
+): number | null {
   if (mode !== "player_pays") return null;
-  return actualFeePence - estimatedProcessingFeePence;
+  return actualFeePence - (estimatedProcessingFeePence - snapshotPlatformFeePence);
 }
 
 export type RecordedProcessingFee = {
@@ -135,6 +266,7 @@ export function recordedProcessingFee(input: {
   mode: ProcessingFeeMode;
   estimatedProcessingFeePence: number;
   actual: ActualProcessingFee | null;
+  platformFeePence?: number;
 }): RecordedProcessingFee {
   if (!input.actual) {
     return {
@@ -147,7 +279,12 @@ export function recordedProcessingFee(input: {
   return {
     stripeProcessingFeePence: input.actual.feePence,
     stripeNetPence: input.actual.netPence,
-    variancePence: processingFeeVariancePence(input.mode, input.estimatedProcessingFeePence, input.actual.feePence),
+    variancePence: processingFeeVariancePence(
+      input.mode,
+      input.estimatedProcessingFeePence,
+      input.actual.feePence,
+      input.platformFeePence ?? 0,
+    ),
     reconciled: true,
   };
 }
@@ -163,10 +300,12 @@ export type ProcessingFeeLedgerView = {
   intendedLabel: string;
   grossLabel: string;
   feeLabel: string;
+  platformFeeLabel: string;
   netLabel: string;
   varianceLabel: string | null;
   reconciliationLabel: string;
   refundLabel: string | null;
+  platformFeeRefundLabel: string | null;
 };
 
 export function processingFeeLedgerView(row: {
@@ -176,26 +315,42 @@ export function processingFeeLedgerView(row: {
   estimated_processing_fee_pence?: number | null;
   stripe_processing_fee_pence?: number | null;
   stripe_net_pence?: number | null;
+  stripe_application_fee_pence?: number | null;
+  stripe_application_fee_refunded_pence?: number | null;
   processing_fee_variance_pence?: number | null;
   status?: string | null;
 }): ProcessingFeeLedgerView {
   const mode = normalizeProcessingFeeMode(row.processing_fee_mode);
   const intended = row.intended_fee_pence ?? row.amount_pence;
-  const actual = row.stripe_processing_fee_pence;
-  const reconciled = actual != null && row.stripe_net_pence != null;
+  const stripeFee = row.stripe_processing_fee_pence;
+  const applicationFee = row.stripe_application_fee_pence;
+  const net = row.stripe_net_pence;
+  const reconciled = stripeFee != null && net != null && (
+    applicationFee == null
+      ? stripeFee + net === row.amount_pence
+      : stripeFee + applicationFee + net === row.amount_pence
+  );
   const variance = mode === "player_pays" && row.processing_fee_variance_pence != null
     ? row.processing_fee_variance_pence
     : null;
+  const platformFeeLabel = applicationFee == null
+    ? (stripeFee == null ? "awaiting Stripe" : "not recorded")
+    : formatGbpFromPence(applicationFee);
+  const refundedApplicationFee = row.stripe_application_fee_refunded_pence;
   return {
     modeLabel: processingFeeModeLabel(mode),
     intendedLabel: formatGbpFromPence(intended),
     grossLabel: formatGbpFromPence(row.amount_pence),
-    feeLabel: actual == null ? "awaiting Stripe" : formatGbpFromPence(actual),
-    netLabel: row.stripe_net_pence == null ? "awaiting Stripe" : formatGbpFromPence(row.stripe_net_pence),
+    feeLabel: stripeFee == null ? "awaiting Stripe" : formatGbpFromPence(stripeFee),
+    platformFeeLabel,
+    netLabel: net == null ? "awaiting Stripe" : formatGbpFromPence(net),
     varianceLabel: variance == null ? null : formatGbpFromPence(variance),
     reconciliationLabel: reconciled ? "reconciled" : "not reconciled",
     refundLabel: row.status === "refunded" || row.status === "refund_pending"
       ? `Refunded ${formatGbpFromPence(row.amount_pence)} charged`
+      : null,
+    platformFeeRefundLabel: refundedApplicationFee != null && refundedApplicationFee > 0
+      ? `Platform fee refunded ${formatGbpFromPence(refundedApplicationFee)}`
       : null,
   };
 }

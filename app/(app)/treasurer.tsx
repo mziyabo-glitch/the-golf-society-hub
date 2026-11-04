@@ -514,12 +514,13 @@ export default function TreasurerScreen() {
                     Fee {feeView.intendedLabel} · {feeView.modeLabel}
                   </AppText>
                   <AppText variant="caption" color="muted">
-                    Gross {feeView.grossLabel} · Processing fee {feeView.feeLabel} · Net {feeView.netLabel}
+                    Gross {feeView.grossLabel} · Stripe processing fee {feeView.feeLabel} · Golf Society Hub platform fee {feeView.platformFeeLabel} · Society net {feeView.netLabel}
                   </AppText>
                   <AppText variant="caption" color="muted">
                     {feeView.varianceLabel ? `Variance ${feeView.varianceLabel} · ` : ""}
                     {feeView.reconciliationLabel}
                     {feeView.refundLabel ? ` · ${feeView.refundLabel}` : ""}
+                    {feeView.platformFeeRefundLabel ? ` · ${feeView.platformFeeRefundLabel}` : ""}
                   </AppText>
                   {tx.event_name?.includes("staging platform charge") ? (
                     <AppText variant="caption" color="muted">
@@ -933,8 +934,9 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             <th>Fee</th>
             <th>Mode</th>
             <th>Gross</th>
-            <th>Processing fee</th>
-            <th>Net</th>
+            <th>Stripe processing fee</th>
+            <th>Golf Society Hub platform fee</th>
+            <th>Society net</th>
             <th>Reconciliation</th>
           </tr>
         </thead>
@@ -943,14 +945,16 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             const view = processingFeeLedgerView(tx);
             const variance = view.varianceLabel ? `Variance ${escapeHtml(view.varianceLabel)}` : "";
             const refund = view.refundLabel ? escapeHtml(view.refundLabel) : "";
+            const platformRefund = view.platformFeeRefundLabel ? escapeHtml(view.platformFeeRefundLabel) : "";
             return `<tr>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(tx.payer_display_name || tx.payer_type)}<br/>${escapeHtml(tx.event_name || "")}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.intendedLabel)}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.modeLabel)}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.grossLabel)}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.feeLabel)}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.platformFeeLabel)}</td>
               <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.netLabel)}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.reconciliationLabel)}${variance ? `<br/>${variance}` : ""}${refund ? `<br/>${refund}` : ""}</td>
+              <td style="padding: 8px; border-bottom: 1px solid #E5E7EB;">${escapeHtml(view.reconciliationLabel)}${variance ? `<br/>${variance}` : ""}${refund ? `<br/>${refund}` : ""}${platformRefund ? `<br/>${platformRefund}` : ""}</td>
             </tr>`;
           }).join("")}
         </tbody>

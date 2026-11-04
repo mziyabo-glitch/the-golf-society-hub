@@ -80,6 +80,8 @@ export function createPaymentCheckoutStore(admin: ReturnType<typeof getServiceRo
           processing_fee_mode: row.processingFeeMode ?? "society_absorbs",
           intended_fee_pence: row.intendedFeePence ?? row.amountPence,
           estimated_processing_fee_pence: row.estimatedProcessingFeePence ?? 0,
+          platform_fee_basis_points: row.platformFeeBasisPoints ?? null,
+          platform_fee_pence: row.platformFeePence ?? 0,
         })
         .select("id")
         .single();
@@ -224,7 +226,9 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
       if (amountPence == null || amountPence <= 0) {
         return { ok: false, result: { status: 400, body: { error: "Event fee is not configured for online payment" } } };
       }
-      const processingQuote = quoteCheckoutCharge(amountPence, society.processing_fee_mode as string | null);
+      const processingQuote = quoteCheckoutCharge(amountPence, society.processing_fee_mode as string | null, undefined, {
+        platformCharge: stagingDecision.mode === "platform",
+      });
 
       const { data: keyed } = await admin
         .from("payment_transactions")
@@ -251,6 +255,8 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
           processingFeeMode: processingQuote.mode,
           intendedFeePence: processingQuote.intendedPence,
           estimatedProcessingFeePence: processingQuote.estimatedProcessingFeePence,
+          platformFeeBasisPoints: processingQuote.platformFeeBasisPoints,
+          platformFeePence: processingQuote.platformFeePence,
           idempotencyKey,
           payerType: "member",
           memberId,

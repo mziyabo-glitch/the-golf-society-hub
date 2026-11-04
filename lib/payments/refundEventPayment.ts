@@ -22,12 +22,22 @@ type RefundTransaction = {
   currency: string;
 };
 
+/**
+ * Full refund of the charged PaymentIntent. A Connect destination charge also
+ * reverses the transfer and sets `refund_application_fee: true`, so Stripe
+ * returns Golf Society Hub's platform fee with a full refund. A staging
+ * platform-only charge has no application fee and does not set that flag.
+ * The ledger does not invent a fee on the refund row.
+ */
 export function refundCreateParams(
   paymentIntentId: string,
   connectAccountId: string | null | undefined,
 ): Stripe.RefundCreateParams {
   const params: Stripe.RefundCreateParams = { payment_intent: paymentIntentId };
-  if (connectAccountId?.trim()) params.reverse_transfer = true;
+  if (connectAccountId?.trim()) {
+    params.reverse_transfer = true;
+    params.refund_application_fee = true;
+  }
   return params;
 }
 
@@ -39,7 +49,16 @@ type RefundDeps = {
   createRefund: (paymentIntentId: string, idempotencyKey: string, connectAccountId?: string | null) => Promise<StripeRefundCheck>;
   retrieveRefund: (refundId: string) => Promise<StripeRefundCheck | null>;
   recordRefund: (transactionId: string, refundId: string, status: RefundRecordStatus) => Promise<void>;
+  recordApplicationFeeRefund?: (transactionId: string, refundedPence: number) => Promise<void>;
 };
+
+function applicationFeeRefundedPence(refund: Stripe.Refund): number | null {
+  const charge = refund.charge;
+  if (!charge || typeof charge === "string") return null;
+  const fee = charge.application_fee;
+  if (!fee || typeof fee === "string") return null;
+  return typeof fee.amount_refunded === "number" ? fee.amount_refunded : null;
+}
 
 function mapRefund(refund: Stripe.Refund): StripeRefundCheck {
   const paymentIntent = refund.payment_intent;
@@ -49,6 +68,7 @@ function mapRefund(refund: Stripe.Refund): StripeRefundCheck {
     amount: refund.amount,
     currency: refund.currency,
     paymentIntentId: typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id ?? null,
+    applicationFeeRefundedPence: applicationFeeRefundedPence(refund),
   };
 }
 
@@ -89,20 +109,30 @@ function defaultDeps(): RefundDeps {
     async createRefund(paymentIntentId, idempotencyKey, connectAccountId) {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
       const refund = await stripe.refunds.create(
-        refundCreateParams(paymentIntentId, connectAccountId),
+        {
+          ...refundCreateParams(paymentIntentId, connectAccountId),
+          expand: ["charge.application_fee"],
+        },
         { idempotencyKey },
       );
       return mapRefund(refund);
     },
     async retrieveRefund(refundId) {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
-      return mapRefund(await stripe.refunds.retrieve(refundId));
+      return mapRefund(await stripe.refunds.retrieve(refundId, { expand: ["charge.application_fee"] }));
     },
     async recordRefund(transactionId, refundId, status) {
       const { error } = await admin.rpc("record_event_stripe_refund", {
         p_payment_transaction_id: transactionId,
         p_stripe_refund_id: refundId,
         p_refund_status: status,
+      });
+      if (error) throw new Error(error.message);
+    },
+    async recordApplicationFeeRefund(transactionId, refundedPence) {
+      const { error } = await admin.rpc("record_event_stripe_application_fee_refund", {
+        p_payment_transaction_id: transactionId,
+        p_refunded_pence: refundedPence,
       });
       if (error) throw new Error(error.message);
     },
@@ -117,6 +147,13 @@ async function recordVerifiedRefund(
   const verified = verifyStripeRefund({ refund, transaction });
   if (!verified.ok) return { status: 422, body: { error: verified.error } };
   await runtime.recordRefund(transaction.id, refund.id, verified.recordStatus);
+  if (refund.applicationFeeRefundedPence != null && runtime.recordApplicationFeeRefund) {
+    try {
+      await runtime.recordApplicationFeeRefund(transaction.id, refund.applicationFeeRefundedPence);
+    } catch (err) {
+      console.error("[stripe refund] application fee:", (err as Error).message);
+    }
+  }
   return { status: 200, body: { refundId: refund.id, refundStatus: verified.recordStatus } };
 }
 

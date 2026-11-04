@@ -11,7 +11,7 @@ import {
   type SocietyPaymentConfig,
 } from "@/lib/payments/eventPricing";
 import { fetchStagingPlatformChargeEnabled, startMemberEventCheckout } from "@/lib/payments/eventPaymentCheckout";
-import { formatGbpFromPence, quoteCheckoutCharge } from "@/lib/payments/processingFee";
+import { PLAYER_PROCESSING_FEE_LABEL, formatGbpFromPence, quoteCheckoutCharge } from "@/lib/payments/processingFee";
 
 type Props = {
   eventId: string;
@@ -93,7 +93,10 @@ export function MemberEventPaymentSection({
       {quote?.mode === "player_pays" ? (
         <View style={{ marginTop: spacing.xs }}>
           <AppText variant="small" color="secondary">
-            Processing fee {formatGbpFromPence(quote.estimatedProcessingFeePence)}
+            Event fee {formatGbpFromPence(quote.intendedPence)}
+          </AppText>
+          <AppText variant="small" color="secondary">
+            {PLAYER_PROCESSING_FEE_LABEL} {formatGbpFromPence(quote.estimatedProcessingFeePence)}
           </AppText>
           <AppText variant="bodyBold" style={{ marginTop: 2 }}>
             Total {formatGbpFromPence(quote.grossPence)}

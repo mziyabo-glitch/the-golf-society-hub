@@ -161,6 +161,7 @@ describe("staging platform charges", () => {
     expect(refundCreateParams("pi_connect", "acct_ready")).toEqual({
       payment_intent: "pi_connect",
       reverse_transfer: true,
+      refund_application_fee: true,
     });
   });
 
@@ -187,7 +188,9 @@ describe("staging platform charges", () => {
     expect(ready.status).toBe(200);
     expect(created).toHaveLength(1);
     expect(created[0]?.payment_intent_data?.transfer_data?.destination).toBe("acct_ready");
-    expect(created[0]?.payment_intent_data?.on_behalf_of).toBeUndefined();
+    expect(created[0]?.payment_intent_data?.on_behalf_of).toBe("acct_ready");
+    expect(created[0]?.payment_intent_data?.application_fee_amount).toBe(50);
+    expect(inserted[0]?.platformFeePence).toBe(50);
     expect(created[0]?.metadata?.[STAGING_PLATFORM_CHARGE_METADATA_KEY]).toBeUndefined();
     expect(inserted[0]?.stripeConnectAccountId).toBe("acct_ready");
 
@@ -219,6 +222,8 @@ describe("staging platform charges", () => {
     expect(JSON.stringify(created[0])).not.toContain("on_behalf_of");
     expect(JSON.stringify(created[0])).not.toContain("application_fee_amount");
     expect(inserted[0]?.stripeConnectAccountId).toBeNull();
+    expect(inserted[0]?.platformFeePence).toBe(0);
+    expect(inserted[0]?.platformFeeBasisPoints).toBe(0);
     expect(inserted[0]?.eventName).toContain("staging platform charge");
 
     const guestCreated: Stripe.Checkout.SessionCreateParams[] = [];

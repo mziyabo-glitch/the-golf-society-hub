@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PROCESSING_FEE_SCHEDULE,
+  PLATFORM_FEE_BASIS_POINTS,
   STRIPE_UK_CARD_FEE_BASIS_POINTS,
   STRIPE_UK_CARD_FEE_FIXED_PENCE,
+  actualFeesFromStripe,
   actualProcessingFeeFromBalance,
   grossUpChargePence,
+  platformFeePence,
   processingFeeLedgerView,
   processingFeeVariancePence,
   quoteCheckoutCharge,
@@ -21,6 +24,7 @@ describe("processing fee quote", () => {
     });
     expect(STRIPE_UK_CARD_FEE_BASIS_POINTS).toBe(150);
     expect(STRIPE_UK_CARD_FEE_FIXED_PENCE).toBe(20);
+    expect(PLATFORM_FEE_BASIS_POINTS).toBe(200);
   });
 
   it("charges the event fee exactly when the society absorbs fees", () => {
@@ -30,25 +34,41 @@ describe("processing fee quote", () => {
       intendedPence: 2500,
       estimatedProcessingFeePence: 0,
       grossPence: 2500,
+      platformFeeBasisPoints: 200,
+      platformFeePence: 50,
+      applicationFeeAmount: 50,
     });
     expect(quoteCheckoutCharge(2500, "unset").grossPence).toBe(2500);
   });
 
-  it("grosses up player-pays charges in integer pence so the society is not short", () => {
+  it("grosses up player-pays charges so the quote covers the card fee and the platform fee", () => {
     expect(grossUpChargePence(2500)).toBe(2559);
+    expect(platformFeePence(2500)).toBe(50);
+    expect(platformFeePence(333)).toBe(7);
+    expect(platformFeePence(25)).toBe(1);
+    expect(platformFeePence(1)).toBe(0);
     const quote = quoteCheckoutCharge(2500, "player_pays");
     expect(quote).toMatchObject({
       mode: "player_pays",
       intendedPence: 2500,
-      estimatedProcessingFeePence: 59,
-      grossPence: 2559,
+      estimatedProcessingFeePence: 110,
+      grossPence: 2610,
       basisPoints: 150,
       fixedPence: 20,
+      platformFeeBasisPoints: 200,
+      platformFeePence: 50,
+      applicationFeeAmount: 50,
     });
+    expect(quote.grossPence - quote.intendedPence - quote.platformFeePence).toBe(60);
     const custom = quoteCheckoutCharge(1000, "player_pays", { basisPoints: 200, fixedPence: 10 });
-    expect(custom.grossPence).toBe(grossUpChargePence(1000, { basisPoints: 200, fixedPence: 10 }));
+    expect(custom.grossPence).toBe(grossUpChargePence(1000, { basisPoints: 200, fixedPence: 10 }, platformFeePence(1000)));
     expect(custom.estimatedProcessingFeePence).toBe(custom.grossPence - 1000);
     expect(grossUpChargePence(100, { basisPoints: 0, fixedPence: 0 })).toBe(100);
+    const staging = quoteCheckoutCharge(2500, "player_pays", undefined, { platformCharge: true });
+    expect(staging.platformFeePence).toBe(0);
+    expect(staging.applicationFeeAmount).toBe(0);
+    expect(staging.grossPence).toBe(2559);
+    expect(quoteCheckoutCharge(2500, "society_absorbs", undefined, { platformCharge: true }).applicationFeeAmount).toBe(0);
   });
 
   it("records the balance-transaction fee and leaves the estimate unused", () => {
@@ -148,7 +168,78 @@ describe("processing fee quote", () => {
     expect(refundCreateParams("pi_test", "acct_ready")).toEqual({
       payment_intent: "pi_test",
       reverse_transfer: true,
+      refund_application_fee: true,
     });
+    expect(refundCreateParams("pi_test", null)).toEqual({ payment_intent: "pi_test" });
     expect(refundCreateParams("pi_test", "acct_ready")).not.toHaveProperty("amount");
+  });
+
+  it("reads the application fee from Stripe and rounds 2% of an odd amount half-up", () => {
+    expect(actualFeesFromStripe({
+      grossPence: 2500,
+      applicationFeeAmount: 50,
+      balance: {
+        amount: 2500,
+        fee: 149,
+        net: 2351,
+        currency: "gbp",
+        feeDetails: [
+          { type: "stripe_fee", amount: 99 },
+          { type: "application_fee", amount: 50 },
+        ],
+      },
+    })).toEqual({ stripeFeePence: 99, applicationFeePence: 50, societyNetPence: 2351 });
+
+    expect(actualFeesFromStripe({
+      grossPence: 2500,
+      applicationFeeAmount: 50,
+      balance: {
+        amount: 2500,
+        fee: 99,
+        net: 2401,
+        currency: "gbp",
+        feeDetails: [{ type: "stripe_fee", amount: 99 }],
+      },
+    })).toEqual({ stripeFeePence: 99, applicationFeePence: 50, societyNetPence: 2351 });
+
+    expect(actualFeesFromStripe({
+      grossPence: 2500,
+      applicationFeeAmount: 50,
+      balance: { amount: 2500, fee: 149, net: 2351, currency: "gbp" },
+    })).toBeNull();
+
+    expect(actualFeesFromStripe({
+      grossPence: 2500,
+      applicationFeeAmount: 40,
+      balance: {
+        amount: 2500,
+        fee: 149,
+        net: 2351,
+        currency: "gbp",
+        feeDetails: [
+          { type: "stripe_fee", amount: 99 },
+          { type: "application_fee", amount: 50 },
+        ],
+      },
+    })).toBeNull();
+
+    const view = processingFeeLedgerView({
+      processing_fee_mode: "society_absorbs",
+      intended_fee_pence: 2500,
+      amount_pence: 2500,
+      platform_fee_pence: 50,
+      stripe_processing_fee_pence: 99,
+      stripe_application_fee_pence: 50,
+      stripe_net_pence: 2351,
+      status: "refunded",
+      stripe_application_fee_refunded_pence: 50,
+    });
+    expect(view.feeLabel).toBe("£0.99");
+    expect(view.platformFeeLabel).toBe("£0.50");
+    expect(view.netLabel).toBe("£23.51");
+    expect(view.reconciliationLabel).toBe("reconciled");
+    expect(view.platformFeeRefundLabel).toBe("Platform fee refunded £0.50");
+    expect(view.refundLabel).toBe("Refunded £25.00 charged");
+    expect(processingFeeVariancePence("player_pays", 110, 101, 50)).toBe(41);
   });
 });

@@ -7,7 +7,10 @@ import {
 } from "@/lib/payments/checkoutAttempt";
 import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import {
+  PLATFORM_FEE_BASIS_POINTS,
+  PLAYER_PROCESSING_FEE_LABEL,
   normalizeProcessingFeeMode,
+  platformFeePence,
   type ProcessingFeeMode,
 } from "@/lib/payments/processingFee";
 import {
@@ -59,6 +62,8 @@ export type PendingPaymentInsert = {
   processingFeeMode?: ProcessingFeeMode;
   intendedFeePence?: number;
   estimatedProcessingFeePence?: number;
+  platformFeeBasisPoints?: number;
+  platformFeePence?: number;
 };
 
 export type CheckoutStore = {
@@ -86,6 +91,8 @@ export type RunCheckoutInput = {
   processingFeeMode?: ProcessingFeeMode;
   intendedFeePence?: number;
   estimatedProcessingFeePence?: number;
+  platformFeeBasisPoints?: number;
+  platformFeePence?: number;
   /** True only when the beneficiary Connect account can already take charges. */
   beneficiaryChargesEnabled?: boolean;
   /** Staging-only direct charge on the platform account. No Connect transfer. */
@@ -154,23 +161,34 @@ export function paymentFeeSnapshot(input: {
   processingFeeMode?: ProcessingFeeMode;
   intendedFeePence?: number;
   estimatedProcessingFeePence?: number;
-}): { mode: ProcessingFeeMode; intendedPence: number; estimatedProcessingFeePence: number; grossPence: number } {
+  platformFeeBasisPoints?: number;
+  platformFeePence?: number;
+  platformCharge?: boolean;
+}): {
+  mode: ProcessingFeeMode;
+  intendedPence: number;
+  estimatedProcessingFeePence: number;
+  grossPence: number;
+  platformFeeBasisPoints: number;
+  platformFeePence: number;
+  applicationFeeAmount: number;
+} {
   const mode = normalizeProcessingFeeMode(input.processingFeeMode);
-  if (mode === "society_absorbs") {
-    return {
-      mode,
-      intendedPence: input.amountPence,
-      estimatedProcessingFeePence: 0,
-      grossPence: input.amountPence,
-    };
-  }
-  const estimated = input.estimatedProcessingFeePence ?? 0;
-  const intended = input.intendedFeePence ?? input.amountPence - estimated;
+  const platformCharge = input.platformCharge === true;
+  const estimated = mode === "society_absorbs" ? 0 : (input.estimatedProcessingFeePence ?? 0);
+  const intended = mode === "society_absorbs"
+    ? (input.intendedFeePence ?? input.amountPence)
+    : (input.intendedFeePence ?? input.amountPence - estimated);
+  const snapshotPlatformFee = platformCharge ? 0 : (input.platformFeePence ?? platformFeePence(intended));
+  const snapshotBasisPoints = platformCharge ? 0 : (input.platformFeeBasisPoints ?? PLATFORM_FEE_BASIS_POINTS);
   return {
     mode,
     intendedPence: intended,
     estimatedProcessingFeePence: estimated,
     grossPence: input.amountPence,
+    platformFeeBasisPoints: snapshotBasisPoints,
+    platformFeePence: snapshotPlatformFee,
+    applicationFeeAmount: platformCharge ? 0 : snapshotPlatformFee,
   };
 }
 
@@ -211,21 +229,50 @@ export function sessionParams(input: RunCheckoutInput, transactionId: string): S
               price_data: {
                 currency: "gbp" as const,
                 unit_amount: fee.estimatedProcessingFeePence,
-                product_data: { name: "Processing fee" },
+                product_data: { name: PLAYER_PROCESSING_FEE_LABEL },
               },
             },
           ]
         : []),
     ],
-    // A staging platform charge must not set transfer_data, on_behalf_of, or application_fee_amount.
+    // A staging platform charge has no destination and no application fee.
+    // A Connect charge sets on_behalf_of so the society bears the Stripe fee
+    // and application_fee_amount is Golf Society Hub's platform fee.
     ...(platformCharge
       ? {}
       : {
           payment_intent_data: {
+            ...(fee.applicationFeeAmount > 0 ? { application_fee_amount: fee.applicationFeeAmount } : {}),
+            on_behalf_of: input.connectAccountId ?? "",
             transfer_data: { destination: input.connectAccountId ?? "" },
           },
         }),
     metadata,
+  };
+}
+
+function pendingPaymentRow(input: RunCheckoutInput, idempotencyKey: string): PendingPaymentInsert {
+  const fee = paymentFeeSnapshot(input);
+  return {
+    societyId: input.societyId,
+    beneficiarySocietyId: input.beneficiarySocietyId,
+    eventId: input.eventId,
+    payerType: input.payerType,
+    memberId: input.memberId,
+    guestId: input.guestId,
+    societyName: input.societyName,
+    beneficiarySocietyName: input.beneficiarySocietyName,
+    eventName: input.eventName,
+    eventDateSnapshot: input.eventDateSnapshot,
+    payerDisplayName: input.payerDisplayName,
+    amountPence: input.amountPence,
+    idempotencyKey,
+    stripeConnectAccountId: input.connectAccountId,
+    processingFeeMode: fee.mode,
+    intendedFeePence: fee.intendedPence,
+    estimatedProcessingFeePence: fee.estimatedProcessingFeePence,
+    platformFeeBasisPoints: fee.platformFeeBasisPoints,
+    platformFeePence: fee.platformFeePence,
   };
 }
 
@@ -289,25 +336,12 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
         }
       }
       await input.store.cancelPending(plan.transactionId, "superseded_fee_change");
-      transactionId = await input.store.insertPending({
-        societyId: input.societyId,
-        beneficiarySocietyId: input.beneficiarySocietyId,
-        eventId: input.eventId,
-        payerType: input.payerType,
-        memberId: input.memberId,
-        guestId: input.guestId,
-        societyName: input.societyName,
-        beneficiarySocietyName: input.beneficiarySocietyName,
-        eventName: input.eventName,
-        eventDateSnapshot: input.eventDateSnapshot,
-        payerDisplayName: input.payerDisplayName,
-        amountPence: input.amountPence,
-        idempotencyKey: replacementLedgerIdempotencyKey(input.idempotencyKey, input.amountPence, plan.transactionId),
-        stripeConnectAccountId: input.connectAccountId,
-        processingFeeMode: input.processingFeeMode,
-        intendedFeePence: input.intendedFeePence,
-        estimatedProcessingFeePence: input.estimatedProcessingFeePence,
-      });
+      transactionId = await input.store.insertPending(
+        pendingPaymentRow(
+          input,
+          replacementLedgerIdempotencyKey(input.idempotencyKey, input.amountPence, plan.transactionId),
+        ),
+      );
       replacedSessionId = null;
     } else if (usability === "unusable" || usability === "missing" || usability === "none") {
       transactionId = plan.transactionId;
@@ -318,25 +352,7 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
   }
 
   if (!transactionId) {
-    transactionId = await input.store.insertPending({
-      societyId: input.societyId,
-      beneficiarySocietyId: input.beneficiarySocietyId,
-      eventId: input.eventId,
-      payerType: input.payerType,
-      memberId: input.memberId,
-      guestId: input.guestId,
-      societyName: input.societyName,
-      beneficiarySocietyName: input.beneficiarySocietyName,
-      eventName: input.eventName,
-      eventDateSnapshot: input.eventDateSnapshot,
-      payerDisplayName: input.payerDisplayName,
-        amountPence: input.amountPence,
-        idempotencyKey: input.idempotencyKey,
-        stripeConnectAccountId: input.connectAccountId,
-        processingFeeMode: input.processingFeeMode,
-        intendedFeePence: input.intendedFeePence,
-        estimatedProcessingFeePence: input.estimatedProcessingFeePence,
-      });
+    transactionId = await input.store.insertPending(pendingPaymentRow(input, input.idempotencyKey));
   }
 
   const session = await input.stripe.createSession(

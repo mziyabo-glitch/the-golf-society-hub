@@ -17,6 +17,7 @@ export type PaymentTransactionCheck = {
   stripe_checkout_session_id: string | null;
   stripe_payment_intent_id: string | null;
   stripe_connect_account_id: string | null;
+  platform_fee_pence?: number | null;
 };
 
 export type CheckoutSessionCheck = {
@@ -38,7 +39,13 @@ export type PaymentIntentCheck = {
   destinationAccountId: string | null;
   applicationFeeAmount?: number | null;
   receiptUrl: string | null;
-  balanceTransaction?: { amount: number; fee: number; net: number; currency: string } | null;
+  balanceTransaction?: {
+    amount: number;
+    fee: number;
+    net: number;
+    currency: string;
+    feeDetails?: { type?: string | null; amount?: number | null }[] | null;
+  } | null;
 };
 
 export type VerifiedStripePayment = {
@@ -74,6 +81,7 @@ export type StripeRefundCheck = {
   amount: number;
   currency: string;
   paymentIntentId: string | null;
+  applicationFeeRefundedPence?: number | null;
 };
 
 export type RefundRecordStatus = "pending" | "succeeded" | "failed";
@@ -191,6 +199,11 @@ export function verifyPaidCheckout(input: {
       return { ok: false, status: 422, error: "Connect account mismatch", code: "payment_connect_account_mismatch" };
     }
     connectAccountId = "";
+  } else if (
+    tx.platform_fee_pence != null
+    && (intent.applicationFeeAmount ?? 0) !== tx.platform_fee_pence
+  ) {
+    return { ok: false, status: 422, error: "Application fee mismatch", code: "payment_application_fee_mismatch" };
   } else if (
     !connectAccountId ||
     intent.destinationAccountId !== connectAccountId ||

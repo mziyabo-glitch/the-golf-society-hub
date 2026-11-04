@@ -260,13 +260,15 @@ export async function handleCreateGuestCheckoutSession(
 
     const urls = buildCheckoutReturnUrls(body.eventId, serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL));
     const openRows = context.rows.filter((row) => row.status === "pending" || row.status === "succeeded" || row.status === "refund_pending");
-    const processingQuote = quoteCheckoutCharge(claim.amountPence, context.society.processing_fee_mode);
+    const processingQuote = quoteCheckoutCharge(claim.amountPence, context.society.processing_fee_mode, undefined, { platformCharge: stagingDecision.mode === "platform" });
     const routed = routeStagingCheckout(
       {
         amountPence: processingQuote.grossPence,
         processingFeeMode: processingQuote.mode,
         intendedFeePence: processingQuote.intendedPence,
         estimatedProcessingFeePence: processingQuote.estimatedProcessingFeePence,
+        platformFeeBasisPoints: processingQuote.platformFeeBasisPoints,
+        platformFeePence: processingQuote.platformFeePence,
         idempotencyKey,
         payerType: "guest" as const,
         memberId: null,
