@@ -123,6 +123,7 @@ describe("stripe payment foundation", () => {
       "supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql",
       "supabase/migrations/20261104160000_replace_society_own_connect_account.sql",
       "supabase/migrations/20261104180000_processing_fee_mode.sql",
+      "supabase/migrations/20261104190000_processing_fee_mode_update.sql",
     ]) {
       const version = path.basename(file).slice(0, 14);
       const hour = Number(version.slice(8, 10));
@@ -171,6 +172,14 @@ describe("stripe payment foundation", () => {
     expect(feeSql).toContain("REVOKE ALL ON FUNCTION public.record_event_stripe_processing_fee");
     expect(feeSql).not.toContain("GRANT EXECUTE ON FUNCTION public.record_event_stripe_processing_fee(uuid, text, integer, integer)\n  TO authenticated");
     expect(feeSql).toContain("TO service_role");
+    const feeUpdateSql = readFileSync(
+      path.join(root, "supabase/migrations/20261104190000_processing_fee_mode_update.sql"),
+      "utf8",
+    );
+    expect(feeUpdateSql).toContain("GRANT UPDATE (processing_fee_mode)");
+    expect(feeUpdateSql).toContain("DROP POLICY IF EXISTS societies_update_opening_balance_captain_treasurer");
+    expect(feeUpdateSql).not.toContain("stripe_connect_account_id");
+    expect("20261104190000" > "20261104180000").toBe(true);
     expect("20261104180000" > "20261104160000").toBe(true);
     const handlerSql = readFileSync(path.join(root, "lib/payments/createCheckoutSessionHandler.ts"), "utf8");
     const guestSql = readFileSync(path.join(root, "lib/payments/guestCheckout.ts"), "utf8");
