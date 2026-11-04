@@ -71,7 +71,7 @@ function pendingTx(overrides: Record<string, unknown> = {}) {
     currency: "gbp",
     event_id: eventId,
     society_id: societyId,
-    beneficiary_society_id: beneficiaryId,
+    beneficiary_society_id: societyId,
     payer_type: "member",
     member_id: memberId,
     guest_id: null,
@@ -119,6 +119,7 @@ describe("stripe payment foundation", () => {
       "supabase/migrations/20261030200000_guest_payment_invitations.sql",
       "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql",
       "supabase/migrations/20261104021500_staging_platform_charge_apply.sql",
+      "supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql",
     ]) {
       const version = path.basename(file).slice(0, 14);
       const hour = Number(version.slice(8, 10));
@@ -137,6 +138,14 @@ describe("stripe payment foundation", () => {
     expect(platformSql).not.toContain("SET enabled = true");
     expect(platformSql).not.toContain("ALTER DATABASE");
     expect(platformSql).toContain("payment_connect_account_mismatch");
+    const ownSocietySql = readFileSync(
+      path.join(root, "supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql"),
+      "utf8",
+    );
+    expect(ownSocietySql).toContain("payment_beneficiary_own_society");
+    expect(ownSocietySql).toContain("IS DISTINCT FROM p_payer_society_id");
+    expect(ownSocietySql).not.toContain("GRANT UPDATE (payment_beneficiary_society_id)");
+    expect(ownSocietySql).not.toContain("eaenzjwecrrbhibrvgsb.supabase.co");
   });
 
   it("keeps online pay now off unless Connect is ready and the player is playing and unpaid", () => {
@@ -414,7 +423,7 @@ describe("stripe payment foundation", () => {
       guestId: null,
       eventId,
       societyId,
-      beneficiarySocietyId: beneficiaryId,
+      beneficiarySocietyId: societyId,
       societyName: "M4",
       beneficiarySocietyName: "M4",
       eventName: "Spring",
@@ -461,7 +470,7 @@ describe("stripe payment foundation", () => {
       guestId: null,
       eventId,
       societyId,
-      beneficiarySocietyId: beneficiaryId,
+      beneficiarySocietyId: societyId,
       societyName: "M4",
       beneficiarySocietyName: "M4",
       eventName: "Spring",
@@ -583,13 +592,6 @@ describe("stripe payment foundation", () => {
           stripe_connect_account_id: "acct_test",
           stripe_connect_charges_enabled: true,
         },
-        beneficiary: {
-          id: beneficiaryId,
-          name: "M4",
-          stripe_connect_account_id: "acct_test",
-          stripe_connect_charges_enabled: true,
-        },
-        participatingSocietyIds: [societyId, beneficiaryId],
         rows: [] as { id: string; status: string; amount_pence: number; stripe_checkout_session_id: string | null; guest_id: string }[],
         keyed: null,
       }),
@@ -631,13 +633,6 @@ describe("stripe payment foundation", () => {
         stripe_connect_account_id: "acct_test",
         stripe_connect_charges_enabled: true,
       },
-      beneficiary: {
-        id: beneficiaryId,
-        name: "M4",
-        stripe_connect_account_id: "acct_test",
-        stripe_connect_charges_enabled: true,
-      },
-      participatingSocietyIds: [societyId, beneficiaryId],
       rows: [] as { id: string; status: string; amount_pence: number; stripe_checkout_session_id: string | null; guest_id: string }[],
       keyed: null,
     };
@@ -851,15 +846,63 @@ describe("stripe payment foundation", () => {
       now,
     })).toMatchObject({ error: "RSVP as playing before paying" });
     expect(paymentBeneficiaryError({
-      beneficiarySocietyId: beneficiaryId,
-      hostSocietyId: societyId,
-      participatingSocietyIds: [societyId],
-    })).toMatch(/not part of this event/i);
-    expect(paymentBeneficiaryError({
-      beneficiarySocietyId: beneficiaryId,
-      hostSocietyId: societyId,
-      participatingSocietyIds: [societyId, beneficiaryId],
+      payerSocietyId: societyId,
+      beneficiarySocietyId: societyId,
     })).toBeNull();
+    expect(paymentBeneficiaryError({
+      payerSocietyId: societyId,
+      beneficiarySocietyId: beneficiaryId,
+    })).toMatch(/own society/i);
+  });
+
+  it("refuses a Checkout or webhook that would pay another society", async () => {
+    let created = 0;
+    const refused = await runEventCheckout({
+      amountPence: 2500,
+      idempotencyKey: "client-key-1234",
+      payerType: "member",
+      memberId,
+      guestId: null,
+      eventId,
+      societyId,
+      beneficiarySocietyId: beneficiaryId,
+      societyName: "M4",
+      beneficiarySocietyName: "ZGS",
+      eventName: "M4 v ZGS",
+      eventDateSnapshot: null,
+      payerDisplayName: "Player",
+      connectAccountId: "acct_zgs",
+      successUrl: "https://app.example/success",
+      cancelUrl: "https://app.example/cancel",
+      rows: [],
+      keyed: null,
+      stripe: {
+        retrieveSession: async () => {
+          throw new Error("should not retrieve");
+        },
+        expireSession: async () => undefined,
+        createSession: async () => {
+          created += 1;
+          return { id: "cs_other", url: "https://pay.other" };
+        },
+      },
+      store: {
+        cancelPending: async () => undefined,
+        insertPending: async () => txId,
+        saveSessionId: async () => undefined,
+      },
+    });
+    expect(refused.status).toBe(403);
+    expect(created).toBe(0);
+    const mismatch = verifyPaidCheckout({
+      stripeEventId: "evt_other",
+      session: paidSession(),
+      paymentIntent: intent,
+      transaction: pendingTx({ beneficiary_society_id: beneficiaryId }),
+      beneficiaryConnectAccountId: "acct_test",
+    });
+    expect(mismatch.ok).toBe(false);
+    if (!mismatch.ok) expect(mismatch.code).toBe("payment_beneficiary_mismatch");
   });
 
   it("does not replace or cancel a live Checkout when Stripe cannot be reached", async () => {
@@ -894,7 +937,7 @@ describe("stripe payment foundation", () => {
       guestId: null,
       eventId,
       societyId,
-      beneficiarySocietyId: beneficiaryId,
+      beneficiarySocietyId: societyId,
       societyName: "M4",
       beneficiarySocietyName: "M4",
       eventName: "Spring",
@@ -1048,7 +1091,7 @@ describe("stripe payment foundation", () => {
             payment_transaction_id: txId,
             event_id: eventId,
             society_id: societyId,
-            beneficiary_society_id: beneficiaryId,
+            beneficiary_society_id: societyId,
             payer_type: "member",
             member_id: memberId,
             guest_id: "",

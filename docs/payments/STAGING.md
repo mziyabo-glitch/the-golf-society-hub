@@ -62,7 +62,9 @@ Fresh database: `supabase db reset` applies `supabase/migrations` in filename or
 3. `supabase/migrations/20261030200000_guest_payment_invitations.sql` (renamed from `20261030250000`; hour 25)
 4. `supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql` (renamed from `20261030260000`; hour 26)
 
-The repair, guest, and destination files were not applied to production. A later production upgrade would be those three files in that order, under a separate change. Do not run it from this workspace.
+`supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql` follows `20261104021500_staging_platform_charge_apply.sql`. Checkout ignores a cross-society destination. Each society collects its own fee. This file was not applied to production.
+
+The repair, guest, and destination files were not applied to production. A later production upgrade would be those three files in that order, under a separate change. Do not run it from this workspace. Do not apply the joint-payment file to production from this workspace either.
 
 If a local `supabase_migrations.schema_migrations` table still has the old versions, and only if the database host is local:
 
@@ -206,7 +208,7 @@ Copy that command's `whsec_` into `STRIPE_WEBHOOK_SECRET` in the same gitignored
 6. Duplicate webhooks do not duplicate payment records. Deliver `checkout.session.completed` twice. The ledger still has one row.
 7. Canceled and failed Checkouts do not mark players paid. Cancel returns to `/event/{id}?payment=canceled`. A failed or unpaid session leaves the registration unpaid.
 8. A guest can pay through the public invite without creating an account. Open `http://127.0.0.1:8081/invite/24000000-0000-4000-8000-000000000001`, submit a name, and use the returned `paymentToken`. `POST http://127.0.0.1:3001/api/stripe/guest-checkout` with header `Idempotency-Key` and body `{"paymentToken":"<token>","eventId":"24000000-0000-4000-8000-000000000001","societyId":"22000000-0000-4000-8000-000000000001","guestId":"<guest uuid>"}`. A raw guest UUID without that token is rejected.
-9. Joint-event payout routing. As the M4 captain or treasurer, `select public.set_event_payment_beneficiary('24000000-0000-4000-8000-000000000001', '22000000-0000-4000-8000-000000000001', '22000000-0000-4000-8000-000000000002')` routes the £25 charge to Staging ZGS. The beneficiary must be Staging M4 (`22000000-0000-4000-8000-000000000001`) or Staging ZGS (`22000000-0000-4000-8000-000000000002`). Checkout uses that society's test-mode Connect account. A Secretary or Handicapper update of the event does not change it.
+9. Joint events are paid per society. A Staging M4 member pays Staging M4's fee into Staging M4's Connect account, and that ledger row is visible to the Staging M4 Treasurer. A Staging ZGS member pays Staging ZGS the same way. A guest pays the society that invited them. There is no cross-society payout and no payment into the other society's account.
 10. Refund. As `staging.m4.treasurer@gsh-staging.test`, `POST http://127.0.0.1:3001/api/stripe/refund` with `Authorization: Bearer <access_token>`, header `Idempotency-Key`, and body `{"transactionId":"<payment_transactions.id>"}`. `stripe listen` must forward `charge.refunded` and `refund.updated` before the ledger matches Stripe.
 11. Pending, failed, and successful refunds are represented accurately. `succeeded` marks that same row `refunded` and the linked player unpaid. `pending` sets `refund_pending` and leaves the player paid until `refund.updated`. `failed` leaves the original payment `succeeded`.
 12. Expired sessions, Stripe API timeouts, and late webhooks recover safely. An expired or complete-unpaid session can be replaced. A timeout or HTTP 5xx returns 503 and does not expire or replace the open session. A later `checkout.session.completed` for the original session id still credits that one row.

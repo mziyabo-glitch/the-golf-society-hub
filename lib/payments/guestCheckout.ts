@@ -60,8 +60,6 @@ type GuestCheckoutContext = {
     stripe_connect_account_id: string | null;
     stripe_connect_charges_enabled: boolean | null;
   } | null;
-  beneficiary: { id: string; name: string | null; stripe_connect_account_id: string | null; stripe_connect_charges_enabled: boolean | null } | null;
-  participatingSocietyIds: string[];
   rows: OpenPaymentRow[];
   keyed: OpenPaymentRow | null;
 };
@@ -119,26 +117,6 @@ function buildDefaultGuestCheckoutDeps(stripeKey: string): GuestCheckoutDeps {
             .eq("id", societyId)
             .maybeSingle()
         : { data: null };
-      const hostSocietyId = (event?.society_id as string | undefined) ?? societyId;
-      let beneficiaryId = hostSocietyId ?? null;
-      let participatingSocietyIds: string[] = [];
-      if (eventId) {
-        const { data: links, error: linkErr } = await admin
-          .from("event_societies")
-          .select("society_id, payment_beneficiary_society_id")
-          .eq("event_id", eventId);
-        if (linkErr) throw new Error(linkErr.message);
-        participatingSocietyIds = (links ?? []).map((link) => String(link.society_id));
-        const own = societyId ? (links ?? []).find((link) => String(link.society_id) === societyId) : null;
-        if (own?.payment_beneficiary_society_id) beneficiaryId = String(own.payment_beneficiary_society_id);
-      }
-      const { data: beneficiary } = beneficiaryId
-        ? await admin
-            .from("societies")
-            .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
-            .eq("id", beneficiaryId)
-            .maybeSingle()
-        : { data: null };
       const { data: keyed, error: keyedErr } = await admin
         .from("payment_transactions")
         .select(paymentSelect)
@@ -189,15 +167,6 @@ function buildDefaultGuestCheckoutDeps(stripeKey: string): GuestCheckoutDeps {
               stripe_connect_charges_enabled: society.stripe_connect_charges_enabled === true,
             }
           : null,
-        beneficiary: beneficiary
-          ? {
-              id: String(beneficiary.id),
-              name: (beneficiary.name as string | null) ?? null,
-              stripe_connect_account_id: (beneficiary.stripe_connect_account_id as string | null) ?? null,
-              stripe_connect_charges_enabled: beneficiary.stripe_connect_charges_enabled === true,
-            }
-          : null,
-        participatingSocietyIds,
         rows: (rows ?? []) as OpenPaymentRow[],
         keyed: (keyed as OpenPaymentRow | null) ?? null,
       };
@@ -252,33 +221,27 @@ export async function handleCreateGuestCheckoutSession(
     if (guest.society_id !== body.societyId) return { status: 403, body: { error: "Guest belongs to another society" } };
     if (guest.paid) return { status: 409, body: { error: "Already paid" } };
 
-    if (!context.society?.online_payments_enabled) {
+    if (!context.society || !context.society.online_payments_enabled) {
       return { status: 403, body: { error: "Online payments are not enabled for this society." } };
     }
-    if (!context.beneficiary) {
-      return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
-    }
+    const routeError = paymentBeneficiaryError({
+      payerSocietyId: body.societyId,
+      beneficiarySocietyId: context.society.id,
+    });
+    if (routeError) return { status: 403, body: { error: routeError } };
     const stagingDecision = stagingPlatformChargeDecision({
       env: deps?.env ?? process.env,
       stripeKey,
-      chargesEnabled: context.beneficiary.stripe_connect_charges_enabled === true,
-      connectAccountId: context.beneficiary.stripe_connect_account_id,
+      chargesEnabled: context.society.stripe_connect_charges_enabled === true,
+      connectAccountId: context.society.stripe_connect_account_id,
     });
     if (stagingDecision.mode === "refused") return { status: 403, body: { error: stagingDecision.reason } };
     if (stagingDecision.mode !== "platform") {
       const societyError = validateSocietyPaymentsReady(context.society);
       if (societyError) return { status: 403, body: { error: societyError } };
-      if (!context.beneficiary.stripe_connect_account_id || !context.beneficiary.stripe_connect_charges_enabled) {
+      if (!context.society.stripe_connect_account_id || !context.society.stripe_connect_charges_enabled) {
         return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
       }
-    }
-    if (context.event) {
-      const routeError = paymentBeneficiaryError({
-        beneficiarySocietyId: context.beneficiary.id,
-        hostSocietyId: context.event.society_id,
-        participatingSocietyIds: context.participatingSocietyIds,
-      });
-      if (routeError) return { status: 403, body: { error: routeError } };
     }
     if (context.keyed && context.keyed.guest_id !== guest.id) {
       return { status: 409, body: { error: "Idempotency key belongs to another payer" } };
@@ -303,14 +266,14 @@ export async function handleCreateGuestCheckoutSession(
         guestId: guest.id,
         eventId: body.eventId,
         societyId: body.societyId,
-        beneficiarySocietyId: context.beneficiary.id,
-        societyName: String(context.society?.name || "Society"),
-        beneficiarySocietyName: String(context.beneficiary.name || context.society?.name || "Society"),
+        beneficiarySocietyId: context.society.id,
+        societyName: String(context.society.name || "Society"),
+        beneficiarySocietyName: String(context.society.name || "Society"),
         eventName: String(context.event?.name || "Golf event"),
         eventDateSnapshot: context.event?.date ? String(context.event.date) : null,
         payerDisplayName: String(guest.name || "Guest"),
-        connectAccountId: context.beneficiary.stripe_connect_account_id,
-        beneficiaryChargesEnabled: context.beneficiary.stripe_connect_charges_enabled === true,
+        connectAccountId: context.society.stripe_connect_account_id,
+        beneficiaryChargesEnabled: context.society.stripe_connect_charges_enabled === true,
         successUrl: urls.successUrl,
         cancelUrl: urls.cancelUrl,
         rows: openRows,

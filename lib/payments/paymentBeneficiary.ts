@@ -1,17 +1,15 @@
-/** Societies allowed to receive a joint-event Checkout payout. */
+/**
+ * Joint events: each society collects its own fee.
+ * Checkout must not send a member or guest payment to a host or any other society.
+ */
 export function paymentBeneficiaryError(input: {
+  payerSocietyId: string | null | undefined;
   beneficiarySocietyId: string | null | undefined;
-  hostSocietyId: string | null | undefined;
-  participatingSocietyIds: readonly string[] | null | undefined;
 }): string | null {
+  const payer = String(input.payerSocietyId ?? "").trim();
   const beneficiary = String(input.beneficiarySocietyId ?? "").trim();
-  const host = String(input.hostSocietyId ?? "").trim();
-  if (!beneficiary || !host) return "Payment beneficiary is not part of this event";
-  const approved = new Set<string>([host]);
-  for (const id of input.participatingSocietyIds ?? []) {
-    const societyId = String(id ?? "").trim();
-    if (societyId) approved.add(societyId);
+  if (!payer || !beneficiary || payer !== beneficiary) {
+    return "Payments stay with the payer's own society";
   }
-  if (!approved.has(beneficiary)) return "Payment beneficiary is not part of this event";
   return null;
 }

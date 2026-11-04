@@ -27,6 +27,10 @@ const connectOwnershipSql = readFileSync(
   path.join(root, "supabase/migrations/20261031011022_lock_society_stripe_connect_ownership.sql"),
   "utf8",
 );
+const ownSocietySql = readFileSync(
+  path.join(root, "supabase/migrations/20261104140000_joint_payments_stay_with_payer_society.sql"),
+  "utf8",
+);
 
 const M4 = "10000000-0000-4000-8000-000000000001";
 const JOINT = "10000000-0000-4000-8000-000000000002";
@@ -906,6 +910,7 @@ it("stops unauthorised users redirecting a joint payment and blocks ineligible c
     await db.query(repairSql);
     await db.query(guestInviteSql);
     await db.query(destinationSql);
+    await db.query(ownSocietySql);
     await db.query(`GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role`);
     await db.query(`GRANT SELECT ON public.event_societies, public.events, public.members TO authenticated`);
     await db.query(`GRANT UPDATE ON public.events TO authenticated`);
@@ -963,7 +968,7 @@ it("stops unauthorised users redirecting a joint payment and blocks ineligible c
     await expectUserError(db, HANDICAPPER_USER, redirect, [JOINT, EVENT, M4], /permission denied|payment_beneficiary_unauthorised/);
     await expectUserError(db, PLAYER_USER, redirect, [OUTSIDER, EVENT, M4], /permission denied|payment_beneficiary_unauthorised/);
     await expectUserError(db, CAPTAIN_USER, redirect, [JOINT, EVENT, M4], /permission denied/);
-    await expectRoleError(db, "service_role", redirect, [OUTSIDER, EVENT, M4], /payment_beneficiary_unauthorised/);
+    await expectRoleError(db, "service_role", redirect, [OUTSIDER, EVENT, M4], /payment_beneficiary_own_society/);
 
     await asUser(db, SECRETARY_USER, `UPDATE public.event_societies SET role = 'host' WHERE event_id = $1 AND society_id = $2`, [EVENT, M4]);
     await asUser(db, SECRETARY_USER, `UPDATE public.events SET name = 'Renamed by secretary' WHERE id = $1`, [EVENT]);
@@ -978,7 +983,21 @@ it("stops unauthorised users redirecting a joint payment and blocks ineligible c
       CAPTAIN_USER,
       `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
       [EVENT, M4, OUTSIDER],
-      /payment_beneficiary_not_on_event/,
+      /payment_beneficiary_own_society/,
+    );
+    await expectUserError(
+      db,
+      CAPTAIN_USER,
+      `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
+      [EVENT, M4, JOINT],
+      /payment_beneficiary_own_society/,
+    );
+    await expectUserError(
+      db,
+      TREASURER_USER,
+      `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
+      [EVENT, JOINT, M4],
+      /payment_beneficiary_own_society/,
     );
     await expectUserError(
       db,
@@ -1002,15 +1021,15 @@ it("stops unauthorised users redirecting a joint payment and blocks ineligible c
       /payment_beneficiary_unauthorised/,
     );
 
-    await asUser(db, CAPTAIN_USER, `SELECT public.set_event_payment_beneficiary($1, $2, $3)`, [EVENT, M4, JOINT]);
-    await asUser(db, TREASURER_USER, `SELECT public.set_event_payment_beneficiary($1, $2, $3)`, [EVENT, JOINT, M4]);
+    await asUser(db, CAPTAIN_USER, `SELECT public.set_event_payment_beneficiary($1, $2, $3)`, [EVENT, M4, M4]);
+    await asUser(db, TREASURER_USER, `SELECT public.set_event_payment_beneficiary($1, $2, $3)`, [EVENT, JOINT, JOINT]);
     const routed = await db.query(
       `SELECT society_id, payment_beneficiary_society_id FROM public.event_societies WHERE event_id = $1 ORDER BY society_id`,
       [EVENT],
     );
     expect(routed.rows).toEqual([
-      { society_id: M4, payment_beneficiary_society_id: JOINT },
-      { society_id: JOINT, payment_beneficiary_society_id: M4 },
+      { society_id: M4, payment_beneficiary_society_id: M4 },
+      { society_id: JOINT, payment_beneficiary_society_id: JOINT },
     ]);
 
     await asUser(db, SECRETARY_USER, `DELETE FROM public.event_societies WHERE event_id = $1 AND society_id = $2`, [EVENT, M4]);
@@ -1024,7 +1043,7 @@ it("stops unauthorised users redirecting a joint payment and blocks ineligible c
       `SELECT payment_beneficiary_society_id FROM public.event_societies WHERE event_id = $1 AND society_id = $2`,
       [EVENT, M4],
     );
-    expect(restored.rows[0].payment_beneficiary_society_id).toBe(JOINT);
+    expect(restored.rows[0].payment_beneficiary_society_id).toBeNull();
 
     await asUser(
       db,

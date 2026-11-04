@@ -152,8 +152,8 @@ export function verifyPaidCheckout(input: {
   if (tx.payer_type === "guest" && meta(session, "guest_id") !== (tx.guest_id ?? "")) {
     return { ok: false, status: 422, error: "Guest mismatch", code: "payment_guest_mismatch" };
   }
-  if (!tx.beneficiary_society_id) {
-    return { ok: false, status: 422, error: "Beneficiary society is missing", code: "payment_beneficiary_mismatch" };
+  if (!tx.beneficiary_society_id || tx.beneficiary_society_id !== tx.society_id) {
+    return { ok: false, status: 422, error: "Payments stay with the payer's own society", code: "payment_beneficiary_mismatch" };
   }
   if (tx.stripe_checkout_session_id && tx.stripe_checkout_session_id !== session.id) {
     return { ok: false, status: 422, error: "Checkout session mismatch", code: "payment_session_mismatch" };

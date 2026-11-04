@@ -5,6 +5,7 @@ import {
   stripeCheckoutIdempotencyKey,
   type OpenPaymentRow,
 } from "@/lib/payments/checkoutAttempt";
+import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import {
   STAGING_PLATFORM_CHARGE_METADATA_KEY,
   STAGING_PLATFORM_CHARGE_METADATA_VALUE,
@@ -180,6 +181,12 @@ export function sessionParams(input: RunCheckoutInput, transactionId: string): S
 }
 
 export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateCheckoutResult> {
+  const ownSocietyError = paymentBeneficiaryError({
+    payerSocietyId: input.societyId,
+    beneficiarySocietyId: input.beneficiarySocietyId,
+  });
+  if (ownSocietyError) return { status: 403, body: { error: ownSocietyError } };
+
   const rows =
     input.keyed && !input.rows.some((row) => row.id === input.keyed?.id) ? [input.keyed, ...input.rows] : input.rows;
   const plan = planParticipantCheckout(rows, input.amountPence);

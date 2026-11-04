@@ -40,16 +40,6 @@ function getUserSupabase(accessToken: string) {
   });
 }
 
-function chosenBeneficiarySocietyId(
-  links: { society_id?: string | null; payment_beneficiary_society_id?: string | null }[],
-  payerSocietyId: string,
-  hostSocietyId: string,
-): string {
-  const own = links.find((link) => String(link.society_id) === payerSocietyId);
-  const chosen = own?.payment_beneficiary_society_id ? String(own.payment_beneficiary_society_id) : hostSocietyId;
-  return chosen;
-}
-
 const paymentSelect =
   "id, status, amount_pence, stripe_checkout_session_id, member_id, guest_id, idempotency_key";
 
@@ -140,7 +130,7 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
       const hostSocietyId = String(event.society_id);
       const { data: links, error: linkErr } = await admin
         .from("event_societies")
-        .select("society_id, payment_beneficiary_society_id")
+        .select("society_id")
         .eq("event_id", body.eventId);
       if (linkErr) throw new Error(linkErr.message);
       const participatingSocietyIds = (links ?? []).map((link) => String(link.society_id));
@@ -154,20 +144,14 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
         .maybeSingle();
       if (socErr || !society) return { ok: false, result: { status: 404, body: { error: "Society not found" } } };
 
-      const beneficiarySocietyId = chosenBeneficiarySocietyId(links ?? [], body.societyId, hostSocietyId);
+      const beneficiarySocietyId = body.societyId;
       const beneficiaryRouteError = paymentBeneficiaryError({
+        payerSocietyId: body.societyId,
         beneficiarySocietyId,
-        hostSocietyId,
-        participatingSocietyIds,
       });
       if (beneficiaryRouteError) return { ok: false, result: { status: 403, body: { error: beneficiaryRouteError } } };
-      const { data: beneficiary } = await admin
-        .from("societies")
-        .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
-        .eq("id", beneficiarySocietyId)
-        .maybeSingle();
-      const beneficiaryChargesEnabled = beneficiary?.stripe_connect_charges_enabled === true;
-      const beneficiaryConnectAccountId = (beneficiary?.stripe_connect_account_id as string | null) ?? null;
+      const beneficiaryChargesEnabled = society.stripe_connect_charges_enabled === true;
+      const beneficiaryConnectAccountId = (society.stripe_connect_account_id as string | null) ?? null;
       const stagingDecision = stagingPlatformChargeDecision({
         env: process.env,
         stripeKey,
@@ -179,9 +163,6 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
       }
       if (!society.online_payments_enabled) {
         return { ok: false, result: { status: 403, body: { error: "Online payments are not enabled for this society." } } };
-      }
-      if (!beneficiary) {
-        return { ok: false, result: { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } } };
       }
       if (stagingDecision.mode !== "platform") {
         const societyReadyErr = validateSocietyPaymentsReady(society);
@@ -270,7 +251,7 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
           societyId: body.societyId,
           beneficiarySocietyId,
           societyName: String(society.name || "Society"),
-          beneficiarySocietyName: String(beneficiary.name || society.name || "Society"),
+          beneficiarySocietyName: String(society.name || "Society"),
           eventName: String(event.name || "Golf event"),
           eventDateSnapshot: event.date ? String(event.date) : null,
           payerDisplayName: String(callerMember.display_name || "Member"),

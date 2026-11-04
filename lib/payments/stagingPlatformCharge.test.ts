@@ -17,7 +17,6 @@ import { verifyPaidCheckout } from "@/lib/payments/webhookVerification";
 const txId = "00000000-0000-4000-8000-000000000010";
 const eventId = "00000000-0000-4000-8000-000000000011";
 const societyId = "00000000-0000-4000-8000-000000000012";
-const beneficiaryId = "00000000-0000-4000-8000-000000000013";
 const memberId = "00000000-0000-4000-8000-000000000014";
 const guestId = "00000000-0000-4000-8000-000000000071";
 const token = "ab".repeat(32);
@@ -50,7 +49,7 @@ function memberDeps(opts: {
         guestId: null,
         eventId,
         societyId,
-        beneficiarySocietyId: beneficiaryId,
+        beneficiarySocietyId: societyId,
         societyName: "Staging M4",
         beneficiarySocietyName: "Staging M4",
         eventName: "Staging M4 v ZGS",
@@ -103,13 +102,6 @@ function guestContext(chargesEnabled: boolean, connectAccountId: string | null) 
       stripe_connect_account_id: connectAccountId,
       stripe_connect_charges_enabled: chargesEnabled,
     },
-    beneficiary: {
-      id: beneficiaryId,
-      name: "Staging M4",
-      stripe_connect_account_id: connectAccountId,
-      stripe_connect_charges_enabled: chargesEnabled,
-    },
-    participatingSocietyIds: [societyId, beneficiaryId],
     rows: [],
     keyed: null,
   };
@@ -239,6 +231,8 @@ describe("staging platform charges", () => {
     expect(guestCreated[0]?.payment_intent_data).toBeUndefined();
     expect(guestCreated[0]?.metadata?.[STAGING_PLATFORM_CHARGE_METADATA_KEY]).toBe("true");
     expect(guestInserted[0]?.stripeConnectAccountId).toBeNull();
+    expect(guestInserted[0]?.societyId).toBe(societyId);
+    expect(guestInserted[0]?.beneficiarySocietyId).toBe(societyId);
 
     const connectCreated: Stripe.Checkout.SessionCreateParams[] = [];
     const connect = await handleCreateEventCheckoutSession(
@@ -260,7 +254,7 @@ describe("staging platform charges", () => {
       guestId: null,
       eventId,
       societyId,
-      beneficiarySocietyId: beneficiaryId,
+      beneficiarySocietyId: societyId,
       societyName: "Staging M4",
       beneficiarySocietyName: "Staging M4",
       eventName: "Staging M4 v ZGS",
@@ -364,7 +358,7 @@ describe("staging platform charges", () => {
             payment_transaction_id: txId,
             event_id: eventId,
             society_id: societyId,
-            beneficiary_society_id: beneficiaryId,
+            beneficiary_society_id: societyId,
             payer_type: "member",
             member_id: memberId,
             guest_id: "",
@@ -383,7 +377,7 @@ describe("staging platform charges", () => {
         currency: "gbp",
         event_id: eventId,
         society_id: societyId,
-        beneficiary_society_id: beneficiaryId,
+        beneficiary_society_id: societyId,
         payer_type: "member",
         member_id: memberId,
         guest_id: null,
@@ -475,7 +469,7 @@ describe("staging platform charges", () => {
           currency: "gbp",
           event_id: eventId,
           society_id: societyId,
-          beneficiary_society_id: beneficiaryId,
+          beneficiary_society_id: societyId,
           payer_type: "member",
           member_id: memberId,
           guest_id: null,
